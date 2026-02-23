@@ -18,14 +18,14 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  workflowJson["workflow.json"] --> convert["Workflow(..., convert_callbacks=...)"]
+  workflowJson["workflow.json"] --> convert["ApiFlow(..., convert_callbacks=...)"]
   convert --> apiFlow["ApiFlow"]
 ```
 
 ```python
 # api
 import random
-from autoflow import Workflow
+from autoflow import ApiFlow
 
 rng = random.SystemRandom()
 
@@ -34,7 +34,7 @@ def random_seed(ctx):
         return rng.randrange(0, 2**31)
     return None
 
-api = Workflow("workflow.json", node_info="node_info.json", convert_callbacks=random_seed)
+api = ApiFlow("workflow.json", convert_callbacks=random_seed)
 ```
 
 ## Metadata-driven targeting (workflow['extra'])
@@ -72,7 +72,7 @@ flowchart LR
 ```python
 # api
 import random
-from autoflow import Workflow
+from autoflow import ApiFlow
 
 rng = random.SystemRandom()
 
@@ -84,7 +84,7 @@ def seed_from_meta(ctx):
         return rng.randrange(0, 2**31)
     return None
 
-api = Workflow("workflow.json", node_info="node_info.json", convert_callbacks=seed_from_meta)
+api = ApiFlow("workflow.json", convert_callbacks=seed_from_meta)
 ```
 
 ## Per-node patch injection (extra.autoflow.meta.nodes + extra.meta.nodes)
@@ -127,7 +127,6 @@ If both are present for the same node id, they are applied in this order:
 from autoflow import Flow
 
 api = Flow.load("workflow.json").convert(
-    node_info="node_info.json",
     # disable_autoflow_meta=True,
 )
 print(api["8"]["meta"]["note"])  # "hello"
@@ -165,7 +164,7 @@ flowchart LR
 
 ```python
 # api
-from autoflow import Workflow, api_mapping
+from autoflow import ApiFlow, api_mapping
 
 def win_to_linux(ctx):
     v = ctx["value"]
@@ -176,7 +175,7 @@ def win_to_linux(ctx):
         s = "/mnt/z/" + s[3:]
     return s if s != v else None
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 api = api_mapping(api, win_to_linux)
 ```
 

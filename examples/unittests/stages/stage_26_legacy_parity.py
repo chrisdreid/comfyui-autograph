@@ -92,7 +92,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     def t_26_5():
         """ApiFlow path get/set — uses bundled workflow + builtin node_info."""
         ni_p = builtin_node_info_path()
-        api = Workflow(str(_BUNDLED_WORKFLOW), node_info=ni_p)
+        api = ApiFlow(str(_BUNDLED_WORKFLOW), node_info=ni_p)
         assert isinstance(api, ApiFlow)
         api["ksampler/seed"] = 123
         assert api.ksampler[0].seed == 123

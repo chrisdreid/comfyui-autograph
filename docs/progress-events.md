@@ -1,6 +1,6 @@
 # Live progress events (WebSocket)
 
-If you pass `wait=True` and `on_event=...`, autoflow opens ComfyUI’s WebSocket and streams events into your callback.
+If you pass `wait=True` and `on_event=...`, autoflow opens ComfyUI's WebSocket and streams events into your callback.
 
 ```mermaid
 flowchart  LR
@@ -21,12 +21,12 @@ flowchart LR
 
 ## Completed events detected via history (WS silent / all-cached / queued)
 
-Sometimes ComfyUI completes without producing a terminal websocket frame (common when everything is cached, or when you’re queued and the WS stays quiet).
+Sometimes ComfyUI completes without producing a terminal websocket frame (common when everything is cached, or when you're queued and the WS stays quiet).
 
 In those cases, autoflow will probe `GET /history/<prompt_id>` and emit a **synthetic** terminal event:
 
 - `type="completed"` (still a normal completed event)
-- `detected_by="history"` (marker so you can tell it wasn’t a literal WS frame)
+- `detected_by="history"` (marker so you can tell it wasn't a literal WS frame)
 - `data` includes history-derived payload to make it feel like a real event:
   - `data["status"]` (including `completed`, `status_str`, `messages` when present)
   - `data["outputs"]` (output refs, when present)
@@ -42,9 +42,9 @@ autoflow includes an idle timeout so a silent websocket does not hang forever:
 
 ```python
 # api
-from autoflow import Workflow, ProgressPrinter
+from autoflow import ApiFlow, ProgressPrinter
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 api.submit(server_url="http://localhost:8188", wait=True, on_event=ProgressPrinter())
 ```
 
@@ -68,12 +68,12 @@ flowchart LR
 
 ```python
 # api
-from autoflow import Workflow, ProgressPrinter, chain_callbacks
+from autoflow import ApiFlow, ProgressPrinter, chain_callbacks
 
 def my_cb(ev):
     print(ev.get("type"), ev.get("prompt_id"))
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 api.submit(
     server_url="http://localhost:8188",
     wait=True,

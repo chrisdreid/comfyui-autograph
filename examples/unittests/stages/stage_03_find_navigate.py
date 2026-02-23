@@ -24,7 +24,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Flow, Workflow
+    from autoflow import Flow, ApiFlow
 
     wf_path = str(_BUNDLED_WORKFLOW)
 
@@ -103,21 +103,21 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "3.10", "find result .address()", t_3_10)
 
     def t_3_11():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         results = api.find(class_type="KSampler")
         assert len(results) >= 1, f"ApiFlow find got {len(results)}"
         return {"input": "api.find(class_type='KSampler')", "output": f"{len(results)} match", "result": "✓ ApiFlow find"}
     _run_test(collector, stage, "3.11", "api.find(class_type='KSampler')", t_3_11)
 
     def t_3_12():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         results = api.find(class_type=re.compile(r".*Sampler"))
         assert len(results) >= 1, f"Regex .*Sampler should match ≥1, got {len(results)}"
         return {"input": "api.find(class_type=re.compile('.*Sampler'))", "output": f"{len(results)} matches", "result": "✓ regex find"}
     _run_test(collector, stage, "3.12", "api.find(class_type=re.compile('.*Sampler'))", t_3_12)
 
     def t_3_13():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         try:
             node = api.by_id("3")
             assert node is not None, "by_id('3') returned None"

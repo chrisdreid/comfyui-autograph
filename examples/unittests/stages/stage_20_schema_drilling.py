@@ -24,7 +24,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Flow, Workflow
+    from autoflow import Flow, ApiFlow
 
     wf_path = str(_BUNDLED_WORKFLOW)
 
@@ -89,7 +89,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "20.7", "find(type=re'.*') match-all", t_20_7)
 
     def t_20_8():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ni = api.node_info
         assert ni is not None, "api.node_info is None"
         ks_info = ni.get("KSampler", {})
@@ -100,7 +100,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "20.8", "NodeInfo schema drill to seed spec", t_20_8)
 
     def t_20_9():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler[0]
         seed_val = ks.seed
         if hasattr(seed_val, 'spec'):
@@ -110,7 +110,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "20.9", "WidgetValue.spec() schema drill", t_20_9)
 
     def t_20_10():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler[0]
         d = dir(ks)
         assert "seed" in d, "'seed' not in dir(ks)"

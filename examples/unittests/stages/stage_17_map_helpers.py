@@ -26,13 +26,13 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Workflow, map_strings, map_paths, force_recompute, api_mapping
+    from autoflow import ApiFlow, map_strings, map_paths, force_recompute, api_mapping
 
     wf_path = str(_BUNDLED_WORKFLOW)
 
     # --- map_strings ---
     def t_17_1():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api.unwrap()))
         spec = {"replacements": {"literal": {"Default": "MAPPED"}}}
         result = map_strings(raw, spec)
@@ -42,7 +42,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "17.1", "map_strings literal replacement", t_17_1)
 
     def t_17_2():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api.unwrap()))
         spec = {"replacements": {"regex": {"output_\\d+": "gen_img"}}}
         result = map_strings(raw, spec)
@@ -54,7 +54,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "17.2", "map_strings regex replacement", t_17_2)
 
     def t_17_3():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api.unwrap()))
         os.environ["_AF_TEST_MAP"] = "env_expanded"
         try:
@@ -68,7 +68,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "17.3", "map_strings env expansion", t_17_3)
 
     def t_17_4():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api.unwrap()))
         spec = {"replacements": {"file": "/tmp/_af_test_rules.txt"}}
         Path("/tmp/_af_test_rules.txt").write_text("Default=FILE_MAPPED\n", encoding="utf-8")
@@ -84,7 +84,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # --- map_paths ---
     def t_17_5():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api.unwrap()))
         spec = {"replacements": {"literal": {"/old/path": "/new/path"}}}
         result = map_paths(raw, spec)
@@ -94,7 +94,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # --- force_recompute ---
     def t_17_6():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         result = force_recompute(api)
         assert result is not None, "force_recompute returned None"
         return {"input": "force_recompute(api)", "output": type(result).__name__, "result": "✓ cache-bust"}
@@ -102,7 +102,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # --- api_mapping callback ---
     def t_17_7():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         contexts = []
         def cb(ctx):
             contexts.append(ctx)
@@ -113,7 +113,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "17.7", "api_mapping callback invocations", t_17_7)
 
     def t_17_8():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ctx_keys = set()
         def cb(ctx):
             ctx_keys.update(ctx.keys())
@@ -126,7 +126,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "17.8", "api_mapping context has full keys", t_17_8)
 
     def t_17_9():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         def cb(ctx):
             if ctx.get("param") == "seed":
                 return 12345
@@ -141,7 +141,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # --- verify api_mapping doesn't crash with empty callback ---
     def t_17_10():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         result = api_mapping(api, lambda ctx: None, node_info=BUILTIN_NODE_INFO)
         assert isinstance(result, dict), f"api_mapping returned {type(result)}"
         return {"input": "api_mapping(lambda ctx: None)", "output": type(result).__name__, "result": "✓ no-op callback"}

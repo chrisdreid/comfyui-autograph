@@ -82,8 +82,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 1.9 Widget dot-access with node_info
     def t_1_9():
-        from autoflow import Workflow
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        from autoflow import ApiFlow
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         seed = ks.seed
         assert seed is not None, "KSampler.seed is None"
@@ -92,8 +92,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 1.10 attrs()
     def t_1_10():
-        from autoflow import Workflow
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        from autoflow import ApiFlow
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         a = ks.attrs()
         assert isinstance(a, list), f"attrs() did not return list: {type(a)}"
@@ -104,8 +104,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 1.11 Widget set via dot-access
     def t_1_11():
-        from autoflow import Workflow
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        from autoflow import ApiFlow
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         ks.seed = 42
         val = ks.seed
@@ -116,8 +116,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 1.12 Dynamic widget enumeration
     def t_1_12():
-        from autoflow import Workflow
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        from autoflow import ApiFlow
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         widget_count = 0
         for node_id, node in api.items() if hasattr(api, 'items') else []:
             if not isinstance(node, dict):
@@ -232,8 +232,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 1.21 Tab completion on NodeSet
     def t_1_21():
-        from autoflow import Workflow
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        from autoflow import ApiFlow
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         d = dir(ks)
         assert "seed" in d, f"'seed' not in dir(api.KSampler): {d}"

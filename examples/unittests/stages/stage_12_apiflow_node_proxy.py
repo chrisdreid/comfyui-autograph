@@ -27,10 +27,10 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Workflow, ApiFlow
+    from autoflow import ApiFlow
 
     wf_path = str(_BUNDLED_WORKFLOW)
-    api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+    api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
 
     def t_12_1():
         api2 = copy_mod.deepcopy(api)

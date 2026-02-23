@@ -16,10 +16,10 @@ flowchart LR
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 from autoflow.map import force_recompute
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 api2 = force_recompute(api, use_defaults=True)
 ```
 

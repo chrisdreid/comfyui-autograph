@@ -645,13 +645,22 @@ class NodeInfo(_MappingWrapper):
 
 
 class Workflow:
+    """Deprecated – use ``ApiFlow`` directly.
+
+    ``ApiFlow`` now auto-detects workspace-format JSON and converts it
+    automatically.  This class is kept for backward compatibility and
+    will be removed in a future release.
+    """
+
     def __new__(cls, *args: Any, **kwargs: Any):
-        out = _legacy.Workflow(*args, **kwargs)
-        if isinstance(out, _legacy.Flow):
-            return Flow(out)
-        if isinstance(out, _legacy.ApiFlow):
-            return ApiFlow(out)
-        return out
+        import warnings
+        warnings.warn(
+            "Workflow() is deprecated — use ApiFlow() instead. "
+            "ApiFlow now auto-detects workspace files and converts them automatically.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return ApiFlow(*args, **kwargs)
 
     @classmethod
     def load(cls, *args: Any, **kwargs: Any):

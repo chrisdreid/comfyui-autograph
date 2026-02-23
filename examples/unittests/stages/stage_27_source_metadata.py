@@ -67,7 +67,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     def t_27_2():
         ni_p = builtin_node_info_path()
-        api = Workflow(str(_BUNDLED_WORKFLOW), node_info=ni_p)
+        api = ApiFlow(str(_BUNDLED_WORKFLOW), node_info=ni_p)
         assert isinstance(api.source, str) and api.source.startswith("converted_from("), f"api.source = {api.source!r}"
         assert api.node_info is not None
         assert isinstance(api.node_info.source, str) and api.node_info.source.startswith("file:"), f"ni.source = {api.node_info.source!r}"
@@ -85,7 +85,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
         code = f"""
 import os
 from pathlib import Path
-from autoflow import Flow, ApiFlow, Workflow
+from autoflow import Flow, ApiFlow
 
 flow_path = "{wf_path}"
 oi_path = "{ni_path}"
@@ -94,7 +94,7 @@ f = Flow.load(flow_path, node_info=oi_path)
 print(f.source)
 print(f.node_info.source)
 
-api = Workflow(flow_path, node_info=oi_path)
+api = ApiFlow(flow_path, node_info=oi_path)
 print(api.source)
 print(api.node_info.source)
 """

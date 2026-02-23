@@ -1206,6 +1206,12 @@ class ApiFlow(dict):
         node_info: Optional[Dict[str, Any]] = None,
         use_api: Optional[bool] = None,
         workflow_meta: Optional[Dict[str, Any]] = None,
+        # Conversion params (used when auto-detecting workspace format).
+        auto_convert: bool = True,
+        server_url: Optional[str] = None,
+        timeout: int = DEFAULT_HTTP_TIMEOUT_S,
+        include_meta: bool = DEFAULT_INCLUDE_META,
+        convert_callbacks: Optional[Union[Callable[[Dict[str, Any]], Any], Iterable[Callable[[Dict[str, Any]], Any]]]] = None,
         **kwargs,
     ):
         src: Optional[str] = None
@@ -1267,6 +1273,34 @@ class ApiFlow(dict):
 
             if not isinstance(data, dict):
                 raise ValueError("API payload must be a dict at top level")
+
+            # ── Auto-detect workspace format and convert ──────────────
+            if _is_workspace_data(data):
+                flow = Flow(data, node_info=node_info, server_url=server_url, timeout=timeout)
+                if auto_convert:
+                    converted = flow.convert(
+                        node_info=node_info,
+                        server_url=server_url,
+                        timeout=timeout,
+                        include_meta=include_meta,
+                        convert_callbacks=convert_callbacks,
+                        map_callbacks=map_callbacks,
+                    )
+                    # Steal the converted data and metadata.
+                    super().__init__(converted)
+                    if isinstance(src, str) and src:
+                        object.__setattr__(self, "_autoflow_source", f"converted_from({src})")
+                    self.node_info = converted.node_info
+                    self.use_api = converted.use_api if converted.use_api is not None else use_api
+                    self.workflow_meta = converted.workflow_meta if converted.workflow_meta is not None else workflow_meta
+                    return
+                else:
+                    raise ValueError(
+                        "Data is a ComfyUI workspace workflow (has 'nodes'/'links'), "
+                        "not an API payload. Use Flow() to load workspace files, "
+                        "or pass auto_convert=True (default) to convert automatically."
+                    )
+
             for k, v in data.items():
                 if not isinstance(v, dict):
                     raise ValueError(f"API payload node {k!r} must be a dict")
@@ -2022,9 +2056,22 @@ class Flow(dict):
         )
 
 
+def _is_workspace_data(data: Dict[str, Any]) -> bool:
+    """Return True if *data* looks like a ComfyUI workspace workflow.json."""
+    return (
+        "last_node_id" in data
+        and "last_link_id" in data
+        and isinstance(data.get("nodes"), list)
+        and isinstance(data.get("links"), list)
+    )
+
+
 class Workflow:
-    """
-    Wrapper/factory that auto-detects workspace Flow vs API payload.
+    """Deprecated – use ``ApiFlow`` directly.
+
+    ``ApiFlow`` now auto-detects workspace-format JSON and converts it
+    automatically.  ``Workflow`` is kept as a thin compatibility alias
+    and will be removed in a future release.
     """
 
     def __new__(
@@ -2042,45 +2089,27 @@ class Workflow:
         use_api: Optional[bool] = None,
         workflow_meta: Optional[Dict[str, Any]] = None,
         **kwargs,
-    ) -> Union["Flow", "ApiFlow"]:
+    ) -> "ApiFlow":
+        import warnings
+        warnings.warn(
+            "Workflow() is deprecated — use ApiFlow() instead. "
+            "ApiFlow now auto-detects workspace files and converts them automatically.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if args or kwargs:
             raise TypeError("Workflow accepts a single positional arg (x) plus keyword args")
 
-        if x is None:
-            return ApiFlow({}, node_info=None, use_api=use_api, workflow_meta=workflow_meta)
-
-        is_flow = False
-        if isinstance(x, dict):
-            is_flow = (
-                "last_node_id" in x
-                and "last_link_id" in x
-                and isinstance(x.get("nodes"), list)
-                and isinstance(x.get("links"), list)
-            )
-        else:
-            try:
-                _ = Flow(x)
-                is_flow = True
-            except Exception:
-                is_flow = False
-
-        if is_flow:
-            if not auto_convert:
-                return Flow(x)
-            return Flow(x).convert(
-                node_info=node_info,
-                server_url=server_url,
-                timeout=timeout,
-                include_meta=include_meta,
-                convert_callbacks=convert_callbacks,
-                map_callbacks=map_callbacks,
-            )
-
         return ApiFlow(
             x,
+            auto_convert=auto_convert,
+            node_info=node_info,
+            server_url=server_url,
+            timeout=timeout,
+            include_meta=include_meta,
+            convert_callbacks=convert_callbacks,
             map_callbacks=map_callbacks,
             in_place=in_place,
-            node_info=node_info,
             use_api=use_api,
             workflow_meta=workflow_meta,
         )

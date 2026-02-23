@@ -143,8 +143,8 @@ def handle_api_response(response_data: dict) -> None:
    
    # ✗ Avoid (for API endpoints)
    try:
-       from autoflow import Workflow
-       data = Workflow(workflow_data, node_info="node_info.json")
+       from autoflow import ApiFlow
+       data = ApiFlow(workflow_data, node_info="node_info.json")
    except Exception as e:
        # Exception handling
        pass

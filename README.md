@@ -7,8 +7,15 @@ ComfyUI
 ██╔══██║██║   ██║   ██║   ██║   ██║██╔══╝  ██║     ██║   ██║██║███╗██║
 ██║  ██║╚██████╔╝   ██║   ╚██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝
 ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝ 
-                                                       version: 1.3.2
+                                                       version: 1.4.0
 ```
+
+[![PyPI version](https://img.shields.io/pypi/v/comfyui-autoflow?color=blue)](https://pypi.org/project/comfyui-autoflow/)
+[![Python](https://img.shields.io/pypi/pyversions/comfyui-autoflow)](https://pypi.org/project/comfyui-autoflow/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/chrisdreid/comfyui-autoflow/blob/main/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/chrisdreid/comfyui-autoflow?style=social)](https://github.com/chrisdreid/comfyui-autoflow)
+[![GitHub issues](https://img.shields.io/github/issues/chrisdreid/comfyui-autoflow)](https://github.com/chrisdreid/comfyui-autoflow/issues)
+[![Downloads](https://img.shields.io/pypi/dm/comfyui-autoflow)](https://pypi.org/project/comfyui-autoflow/)
 
 ```mermaid
 flowchart LR
@@ -130,20 +137,20 @@ Convert `workflow.json` by fetching `/object_info` from your running ComfyUI ser
 
 ```mermaid
 flowchart LR
-  env["AUTOFLOW_COMFYUI_SERVER_URL"] --> wf["Workflow(...)"]
+  env["AUTOFLOW_COMFYUI_SERVER_URL"] --> wf["ApiFlow(...)"]
   wf --> apiFlow["ApiFlow"]
   comfy["ComfyUI server"] --> obj["/object_info"]
   obj --> wf
 ```
 If environment variable `AUTOFLOW_COMFYUI_SERVER_URL` is set, `server_url` becomes optional.
 
-If `AUTOFLOW_NODE_INFO_SOURCE` is set, `Workflow(...)` will auto-resolve `node_info` when none is provided.
+If `AUTOFLOW_NODE_INFO_SOURCE` is set, `ApiFlow(...)` will auto-resolve `node_info` when none is provided.
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json")  # uses AUTOFLOW_COMFYUI_SERVER_URL
+api = ApiFlow("workflow.json")  # uses AUTOFLOW_COMFYUI_SERVER_URL
 api.save("workflow-api.json")
 ```
 
@@ -161,7 +168,7 @@ Convert using your saved `node_info.json` (no server needed).
 
 ```mermaid
 flowchart LR
-  workflowJson["workflow.json"] --> wf["Workflow(...)"]
+  workflowJson["workflow.json"] --> wf["ApiFlow(...)"]
   objectInfo["node_info.json"] --> wf
   wf --> apiFlow["ApiFlow"]
   apiFlow --> saveApi["save(workflow-api.json)"]
@@ -169,9 +176,9 @@ flowchart LR
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json", node_info="node_info.json")
 api.save("workflow-api.json")
 ```
 
@@ -217,9 +224,9 @@ flowchart LR
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 api.saveimage.inputs.filename_prefix='autoflow'
 res = api.submit(server_url="http://localhost:8188", wait=True)
 images = res.fetch_images()

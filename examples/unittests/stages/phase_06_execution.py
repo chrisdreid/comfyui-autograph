@@ -128,8 +128,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
         _run_test(collector, stage, "6.6", "NodeInfo.fetch(server_url) live", t_6_6)
 
         def t_6_7():
-            from autoflow import Workflow
-            api = Workflow(str(_BUNDLED_WORKFLOW), server_url=server_url)
+            from autoflow import ApiFlow
+            api = ApiFlow(str(_BUNDLED_WORKFLOW), server_url=server_url)
             assert api is not None, "Live conversion failed"
             return {"input": f"Workflow(wf, server_url=...)", "output": type(api).__name__, "result": "✓ live convert"}
         _run_test(collector, stage, "6.7", "Workflow(wf, server_url) live convert", t_6_7)
@@ -149,7 +149,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     fixtures: List[FixtureCase] = discover_fixtures(fx_dir_str) if fx_dir_str else []
 
     if server_url and fixtures:
-        from autoflow import Workflow
+        from autoflow import ApiFlow
 
         for idx, fx in enumerate(fixtures):
             prefix = f"6.{8 + idx}"
@@ -178,7 +178,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
                         if isinstance(node, dict) and node.get("type") in bypass_types:
                             node["mode"] = 4
 
-                api_wf = Workflow(wf_data, node_info=ni_data) if ni_data else Workflow(wf_data, server_url=server_url)
+                api_wf = ApiFlow(wf_data, node_info=ni_data) if ni_data else Workflow(wf_data, server_url=server_url)
 
                 edits = fixture.manifest.get("edits", {})
                 for edit_key, edit_val in edits.items():
@@ -259,8 +259,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
     elif server_url and not fixtures:
         # Fallback: submit the bundled workflow when no fixtures are available
         def t_6_fallback():
-            from autoflow import Workflow
-            api_wf = Workflow(str(_BUNDLED_WORKFLOW), server_url=server_url)
+            from autoflow import ApiFlow
+            api_wf = ApiFlow(str(_BUNDLED_WORKFLOW), server_url=server_url)
 
             img_out = None
             if output_dir:

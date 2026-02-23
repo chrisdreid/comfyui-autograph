@@ -57,8 +57,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "6.2", "NodeInfo.fetch(server_url)", t_6_2)
 
     def t_6_3():
-        from autoflow import Workflow
-        api = Workflow(str(_BUNDLED_WORKFLOW), server_url=server_url)
+        from autoflow import ApiFlow
+        api = ApiFlow(str(_BUNDLED_WORKFLOW), server_url=server_url)
         assert api is not None, "Live conversion failed"
         return {"input": f"Workflow(wf, server_url={server_url})", "output": type(api).__name__, "result": "✓ live convert"}
     _run_test(collector, stage, "6.3", "Workflow(wf, server_url) live convert", t_6_3)
@@ -73,7 +73,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
             prefix = f"6.{10 + i * 10}"
 
             def t_submit(wf=wf_path, ni=ni_path, fixture=fx, pfx=prefix):
-                from autoflow import Workflow
+                from autoflow import ApiFlow
                 ni_data = None
                 if ni.exists():
                     with open(ni, "r", encoding="utf-8") as fh:
@@ -88,7 +88,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
                         if isinstance(node, dict) and node.get("type") in bypass_types:
                             node["mode"] = 4
 
-                api = Workflow(wf_data, node_info=ni_data) if ni_data else Workflow(wf_data, server_url=server_url)
+                api = ApiFlow(wf_data, node_info=ni_data) if ni_data else Workflow(wf_data, server_url=server_url)
 
                 edits = fixture.manifest.get("edits", {})
                 for edit_key, edit_val in edits.items():
@@ -168,8 +168,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
                           f"[{fx.name}] Output image count = {expected_imgs}", t_img_count)
     else:
         def t_6_4():
-            from autoflow import Workflow
-            api = Workflow(str(_BUNDLED_WORKFLOW), server_url=server_url)
+            from autoflow import ApiFlow
+            api = ApiFlow(str(_BUNDLED_WORKFLOW), server_url=server_url)
             res = api.submit(server_url=server_url, wait=True)
             assert res is not None, "Submit returned None"
             images = res.fetch_images()

@@ -55,8 +55,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # ===================================================================
 
     def t_7_1():
-        from autoflow import force_recompute, Workflow
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        from autoflow import force_recompute, ApiFlow
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         result = force_recompute(api)
         assert result is not None
         return {"input": "force_recompute(api)", "output": type(result).__name__, "result": "✓ works"}
@@ -83,8 +83,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # ===================================================================
 
     def t_7_4():
-        from autoflow import Workflow, ApiFlow
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        from autoflow import ApiFlow
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         assert isinstance(api, ApiFlow)
         assert len(api) > 0
         ks = api.KSampler

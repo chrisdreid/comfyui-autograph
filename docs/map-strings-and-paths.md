@@ -20,10 +20,10 @@ flowchart LR
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 from autoflow.map import map_strings
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 
 spec = {
     "replacements": {
@@ -48,9 +48,9 @@ api2 = map_strings(api, spec)
 # api
 from autoflow.map import map_paths
 
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 spec = {
     "replacements": {
         "literal": {"${ROOT}": "/data/project"},

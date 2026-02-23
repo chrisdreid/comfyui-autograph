@@ -50,7 +50,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import NodeInfo, Flow, Workflow
+    from autoflow import NodeInfo, Flow, ApiFlow
     conv = importlib.import_module("autoflow.convert")
     from autoflow.models import NodeInfo as LegacyNodeInfo
     from autoflow.origin import NodeInfoOrigin
@@ -260,7 +260,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "2.19", "find(type=re'.*') match-all", t_2_19)
 
     def t_2_20():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ni_api = api.node_info
         assert ni_api is not None, "api.node_info is None"
         ks_info = ni_api.get("KSampler", {})
@@ -271,7 +271,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "2.20", "NodeInfo schema drill to seed spec", t_2_20)
 
     def t_2_21():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler[0]
         seed_val = ks.seed
         if hasattr(seed_val, 'spec'):
@@ -281,7 +281,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "2.21", "WidgetValue.spec() schema drill", t_2_21)
 
     def t_2_22():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler[0]
         d = dir(ks)
         assert "seed" in d, "'seed' not in dir(ks)"
@@ -332,7 +332,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
         code = f"""
 import os
 from pathlib import Path
-from autoflow import Flow, ApiFlow, Workflow
+from autoflow import Flow, ApiFlow
 
 flow_path = "{wf_p}"
 oi_path = "{ni_p}"
@@ -341,7 +341,7 @@ f = Flow.load(flow_path, node_info=oi_path)
 print(f.source)
 print(f.node_info.source)
 
-api = Workflow(flow_path, node_info=oi_path)
+api = ApiFlow(flow_path, node_info=oi_path)
 print(api.source)
 print(api.node_info.source)
 """

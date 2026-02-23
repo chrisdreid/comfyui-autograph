@@ -67,10 +67,10 @@ def run(collector: ResultCollector, **kwargs) -> List[FixtureCase]:
         ni_path = fx.directory / fx.manifest.get("node_info", "node-info.json")
         if ni_path.exists():
             def t_convert(wf=wf_path, ni=ni_path, name=fx.name):
-                from autoflow import Workflow
+                from autoflow import ApiFlow
                 with open(ni, "r", encoding="utf-8") as fh:
                     node_info = json.load(fh)
-                api = Workflow(str(wf), node_info=node_info)
+                api = ApiFlow(str(wf), node_info=node_info)
                 assert api is not None, "Conversion failed"
                 j = api.to_json()
                 parsed = json.loads(j)
@@ -81,10 +81,10 @@ def run(collector: ResultCollector, **kwargs) -> List[FixtureCase]:
             expected_count = fx.manifest.get("expected", {}).get("api_node_count")
             if expected_count:
                 def t_count(wf=wf_path, ni=ni_path, exp=expected_count, name=fx.name):
-                    from autoflow import Workflow
+                    from autoflow import ApiFlow
                     with open(ni, "r", encoding="utf-8") as fh:
                         node_info = json.load(fh)
-                    api = Workflow(str(wf), node_info=node_info)
+                    api = ApiFlow(str(wf), node_info=node_info)
                     raw = getattr(api, "unwrap", lambda: api)()
                     count = sum(
                         1 for _, v in raw.items()

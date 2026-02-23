@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from .defaults import DEFAULT_OUTPUT_PATH
-from .model_layer import Flow, Workflow, NodeInfo
+from .model_layer import Flow, ApiFlow, NodeInfo
 
 __all__ = ["main"]
 
@@ -56,13 +56,13 @@ def main(argv=None) -> int:
     # Convert-only mode.
     if not args.submit:
         out_path = args.output_path or DEFAULT_OUTPUT_PATH
-        api = Workflow(args.input_path, node_info=node_info, auto_convert=True, server_url=args.server_url)
+        api = ApiFlow(args.input_path, node_info=node_info, auto_convert=True, server_url=args.server_url)
         api.save(out_path)
         print(str(Path(out_path)))
         return 0
 
     # Submit mode (convert then submit).
-    api = Workflow(args.input_path, node_info=node_info, auto_convert=True, server_url=args.server_url)
+    api = ApiFlow(args.input_path, node_info=node_info, auto_convert=True, server_url=args.server_url)
 
     wait = not bool(args.no_wait)
     on_event = None

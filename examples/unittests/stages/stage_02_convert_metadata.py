@@ -24,13 +24,13 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Workflow, ApiFlow, convert_with_errors
+    from autoflow import ApiFlow, convert_with_errors
 
     wf_path = str(_BUNDLED_WORKFLOW)
 
     # 2.1 Basic conversion
     def t_2_1():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         assert api is not None, "Workflow() returned None"
         assert hasattr(api, "items"), "Converted result has no items()"
         return {"input": f"Workflow({Path(wf_path).name})", "output": type(api).__name__, "result": "✓ converted"}
@@ -38,7 +38,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 2.2 MarkdownNotes stripped
     def t_2_2():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = getattr(api, "unwrap", lambda: api)()
         if hasattr(raw, "items"):
             node_count = sum(1 for _, v in raw.items() if isinstance(v, dict) and "class_type" in v)
@@ -50,7 +50,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 2.3 ApiFlow dot-access
     def t_2_3():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         seed = api.KSampler.seed
         assert seed is not None, "api.KSampler.seed is None"
         return {"input": "api.KSampler.seed", "output": str(seed), "result": "✓ dot-access works"}
@@ -58,7 +58,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 2.4 Path-style access
     def t_2_4():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         try:
             val = api["3"]
             assert val is not None, "api['3'] returned None"
@@ -70,7 +70,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 2.5 Workflow one-liner
     def t_2_5():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         j = api.to_json()
         parsed = json.loads(j)
         assert isinstance(parsed, dict), "Workflow→to_json() is not a valid dict"
@@ -92,7 +92,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 2.7 _meta access on ApiFlow
     def t_2_7():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         try:
             meta = ks._meta
@@ -116,7 +116,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 2.9 _meta survives to_json
     def t_2_9():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = getattr(api, "unwrap", lambda: api)()
         for nid, node in (raw.items() if hasattr(raw, 'items') else api.items()):
             if isinstance(node, dict) and node.get("class_type") == "KSampler":
@@ -135,7 +135,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 2.14 Widget introspection: choices()
     def t_2_14():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         try:
             choices = ks.sampler_name.choices()
@@ -157,7 +157,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 2.15 Widget introspection: tooltip()
     def t_2_15():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         try:
             sv = ks.seed
@@ -173,7 +173,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     # 2.16 Widget introspection: spec()
     def t_2_16():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         try:
             sv = ks.seed

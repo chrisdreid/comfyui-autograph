@@ -26,12 +26,12 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Workflow, api_mapping, map_strings, force_recompute
+    from autoflow import ApiFlow, api_mapping, map_strings, force_recompute
 
     wf_path = str(_BUNDLED_WORKFLOW)
 
     def t_4_1():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api.unwrap()))
         spec = {
             "replacements": {
@@ -45,14 +45,14 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.1", "map_strings() literal replacement", t_4_1)
 
     def t_4_5():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         result = force_recompute(api)
         assert result is not None, "force_recompute returned None"
         return {"input": "force_recompute(api)", "output": type(result).__name__, "result": "✓ cache-bust applied"}
     _run_test(collector, stage, "4.5", "force_recompute()", t_4_5)
 
     def t_4_7():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         contexts_received: List[Dict] = []
         def cb(ctx):
             contexts_received.append(ctx)
@@ -68,7 +68,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.7", "api_mapping callback receives full context", t_4_7)
 
     def t_4_8():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         def cb(ctx):
             if ctx.get("param") == "seed":
                 return 999999

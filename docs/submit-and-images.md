@@ -44,9 +44,9 @@ flowchart LR
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(server_url="http://localhost:8188", wait=False)
 print(res.prompt_id)  # job handle
 ```
@@ -60,7 +60,7 @@ python -m autoflow --submit --input-path workflow.json --server-url http://local
 python -m autoflow --submit --input-path workflow.json --server-url http://localhost:8188 --save-images outputs_submit_images --filepattern frame.###.png --index-offset 1001
 
 # Wait + save registered files (prints prompt_id, then written paths).
-# Use --output-types to narrow. (The default sample workflow reliably produces \"images\".)
+# Use --output-types to narrow. (The default sample workflow reliably produces "images".)
 python -m autoflow --submit --input-path workflow.json --server-url http://localhost:8188 --save-files outputs_submit_files --output-types images
 ```
 
@@ -78,9 +78,9 @@ flowchart LR
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(server_url="http://localhost:8188", wait=True)
 images = res.fetch_images()
 images.save("outputs/frame.###.png")
@@ -92,9 +92,9 @@ Use `fetch_outputs=True` to fetch images during submit (saves an extra call).
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(
     server_url="http://localhost:8188",
     wait=True,
@@ -117,9 +117,9 @@ WebSocket idle timeout:
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(
     server_url="http://localhost:8188",
     wait=True,
@@ -225,9 +225,9 @@ images.save("outputs", filename="render.{src_frame:03d}.png")
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(server_url="http://localhost:8188", wait=True)
 images = res.fetch_images(include_bytes=True)
 

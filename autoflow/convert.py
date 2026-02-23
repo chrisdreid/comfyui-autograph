@@ -618,6 +618,210 @@ def _as_jsonable(value: Any) -> Any:
     return value
 
 
+_EXTRA_NODES_INIT_DONE = False
+
+# Approximate count of core nodes defined in ComfyUI's nodes.py.
+# If NODE_CLASS_MAPPINGS has fewer than this many entries, extra nodes
+# (comfy_extras/, comfy_api_nodes/, custom_nodes/) likely haven't been loaded.
+_CORE_NODES_THRESHOLD = 100
+
+
+def _fix_comfyui_imports() -> None:
+    """Fix import-shadowing issues before loading extra nodes.
+
+    **Problem 1 – ``utils`` shadowing:**
+    ComfyUI has a top-level ``utils/`` package (with ``utils/install_util.py``
+    etc.) that is required by ``server.py`` → ``app/frontend_management.py``.
+    However, importing ``comfy.utils`` (which happens early when loading
+    ``comfy.samplers`` / ``comfy.sd``) can poison Python's import resolution so
+    that a bare ``import utils`` resolves to ``comfy/utils.py`` instead of the
+    top-level ``utils/`` package.  This causes every node that does
+    ``from server import PromptServer`` to fail with
+    ``"'utils' is not a package"``.
+
+    **Problem 2 – ``PromptServer.instance``:**
+    Several custom nodes access ``PromptServer.instance`` at *import time*
+    (e.g. to register routes or prompt handlers).  Outside the server,
+    ``PromptServer()`` is never constructed so ``.instance`` doesn't exist.
+    We set a lightweight stub so those module-level accesses don't crash.
+    """
+    import importlib
+    import importlib.util
+
+    # ── Fix 1: utils package ──────────────────────────────────────────
+    existing = sys.modules.get("utils")
+    if existing is None or not hasattr(existing, "__path__"):
+        root = _detect_comfyui_root_from_imports()
+        if root is not None:
+            utils_init = root / "utils" / "__init__.py"
+            if utils_init.is_file():
+                spec = importlib.util.spec_from_file_location(
+                    "utils",
+                    str(utils_init),
+                    submodule_search_locations=[str(root / "utils")],
+                )
+                if spec is not None and spec.loader is not None:
+                    mod = importlib.util.module_from_spec(spec)
+                    sys.modules["utils"] = mod
+                    try:
+                        spec.loader.exec_module(mod)
+                    except Exception:
+                        pass
+
+    # ── Fix 2: PromptServer.instance stub ─────────────────────────────
+    _ensure_promptserver_instance()
+
+
+class _NoOpProxy:
+    """A proxy that silently absorbs any attribute access or call.
+
+    Used to stub out ``PromptServer.instance`` so that custom nodes which
+    access ``.routes``, ``.prompt_queue``, etc. at import time don't crash.
+    """
+
+    def __getattr__(self, name: str) -> "_NoOpProxy":
+        return _NoOpProxy()
+
+    def __call__(self, *args: object, **kwargs: object) -> "_NoOpProxy":
+        return _NoOpProxy()
+
+    def __bool__(self) -> bool:
+        return False
+
+
+class _AutoRoutes:
+    """Mock for ``aiohttp.web.RouteTableDef`` that returns no-op decorators.
+
+    Custom nodes use ``@PromptServer.instance.routes.post("/path")`` to
+    register HTTP routes at import time.  This stub returns the decorated
+    function unchanged.
+    """
+
+    def _noop_decorator(self, path: str, **kw: object):  # type: ignore
+        def decorator(fn):  # type: ignore
+            return fn
+        return decorator
+
+    # Cover all HTTP methods custom nodes might use.
+    get = post = put = delete = patch = _noop_decorator
+    static = _noop_decorator
+
+    def __iter__(self):  # type: ignore
+        return iter([])
+
+
+def _ensure_promptserver_instance() -> None:
+    """Set ``PromptServer.instance`` to a stub if the server isn't running."""
+    try:
+        from server import PromptServer  # type: ignore
+    except ImportError:
+        return
+
+    if getattr(PromptServer, "instance", None) is not None:
+        return  # Server is running – nothing to do.
+
+    # Build a lightweight stub instance.
+    class _StubInstance:
+        routes = _AutoRoutes()
+        prompt_queue = None
+        client_session = None
+        number = 0
+
+        @staticmethod
+        def add_on_prompt_handler(handler):  # type: ignore
+            pass
+
+        @staticmethod
+        def send_progress_text(*args, **kwargs):  # type: ignore
+            pass
+
+        @staticmethod
+        def send_sync(*args, **kwargs):  # type: ignore
+            pass
+
+        def __getattr__(self, name: str):  # type: ignore
+            return _NoOpProxy()
+
+    PromptServer.instance = _StubInstance()  # type: ignore
+
+
+def _ensure_extra_nodes_loaded() -> None:
+    """Lazily call ComfyUI's ``init_extra_nodes()`` if it hasn't run yet.
+
+    ComfyUI's server calls ``init_extra_nodes()`` at startup which populates
+    ``NODE_CLASS_MAPPINGS`` with nodes from ``comfy_extras/``,
+    ``comfy_api_nodes/``, and ``custom_nodes/``.  When autoflow runs outside
+    the server (standalone script / library usage), only the ~64 core nodes
+    are present.  This helper detects that situation and performs the init.
+    """
+    global _EXTRA_NODES_INIT_DONE
+    if _EXTRA_NODES_INIT_DONE:
+        return
+
+    try:
+        from nodes import NODE_CLASS_MAPPINGS, init_extra_nodes  # type: ignore
+    except ImportError:
+        _EXTRA_NODES_INIT_DONE = True
+        return
+
+    # If the server already loaded extras, skip.
+    if len(NODE_CLASS_MAPPINGS) >= _CORE_NODES_THRESHOLD:
+        _EXTRA_NODES_INIT_DONE = True
+        return
+
+    import asyncio
+    import logging
+
+    # Fix import-shadowing so that `from server import PromptServer` works.
+    _fix_comfyui_imports()
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        # We're inside an active event loop (e.g. Jupyter, server context).
+        # Cannot use asyncio.run(); warn and skip.
+        logging.warning(
+            "autoflow: cannot load ComfyUI extra nodes from within a running "
+            "event loop. NODE_CLASS_MAPPINGS may be incomplete (%d entries). "
+            "Consider calling init_extra_nodes() before using NodeInfo('modules').",
+            len(NODE_CLASS_MAPPINGS),
+        )
+        _EXTRA_NODES_INIT_DONE = True
+        return
+
+    logging.info(
+        "autoflow: NODE_CLASS_MAPPINGS has only %d entries; "
+        "loading extra/custom nodes via init_extra_nodes()...",
+        len(NODE_CLASS_MAPPINGS),
+    )
+    try:
+        # Suppress background threads spawned at import time by custom nodes
+        # (e.g. ComfyUI-Manager's registry fetch).  These serve no purpose
+        # when we're only importing nodes to inspect their class mappings.
+        import threading
+
+        _real_thread_start = threading.Thread.start
+
+        def _suppressed_start(self_thread: threading.Thread) -> None:  # type: ignore
+            logging.debug(
+                "autoflow: suppressed background thread %r during init_extra_nodes()",
+                self_thread.name,
+            )
+
+        threading.Thread.start = _suppressed_start  # type: ignore
+        try:
+            asyncio.run(init_extra_nodes())
+        finally:
+            threading.Thread.start = _real_thread_start  # type: ignore
+    except Exception as exc:
+        logging.warning("autoflow: init_extra_nodes() failed: %s", exc)
+    finally:
+        _EXTRA_NODES_INIT_DONE = True
+
+
 def node_info_from_comfyui_modules() -> Dict[str, Any]:
     try:
         import comfy.samplers  # noqa: F401
@@ -629,6 +833,8 @@ def node_info_from_comfyui_modules() -> Dict[str, Any]:
             "or use --server-url to fetch node information via API, "
             "or use --node-info-path to load from a saved file."
         ) from e
+
+    _ensure_extra_nodes_loaded()
 
     out: Dict[str, Any] = {}
     for class_type, cls in NODE_CLASS_MAPPINGS.items():
@@ -946,6 +1152,8 @@ def get_widget_input_names(class_type: str, node_info: Optional[Dict[str, Any]] 
             "or use --server-url to fetch node information via API, "
             "or use --node-info-path to load from a saved file."
         ) from e
+
+    _ensure_extra_nodes_loaded()
 
     if class_type not in NODE_CLASS_MAPPINGS:
         raise NodeInfoError(f"Node class '{class_type}' not found in NODE_CLASS_MAPPINGS")

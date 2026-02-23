@@ -30,7 +30,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Flow, Workflow
+    from autoflow import Flow, ApiFlow
 
     wf_path = str(_BUNDLED_WORKFLOW)
     wf_json = _BUNDLED_WORKFLOW.read_text(encoding="utf-8")
@@ -100,7 +100,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "3.8", "Multi-instance: CLIPTextEncode[0], [1]", t_3_8)
 
     def t_3_9():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         seed = ks.seed
         assert seed is not None, "KSampler.seed is None"
@@ -108,7 +108,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "3.9", "Widget dot-access: api.KSampler.seed", t_3_9)
 
     def t_3_10():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         a = ks.attrs()
         assert isinstance(a, list), f"attrs() did not return list: {type(a)}"
@@ -118,7 +118,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "3.10", "Widget attrs() or repr", t_3_10)
 
     def t_3_11():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         ks.seed = 42
         val = ks.seed
@@ -128,7 +128,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "3.11", "Widget set: api.KSampler.seed = 42", t_3_11)
 
     def t_3_12():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         widget_count = 0
         for node_id, node in api.items() if hasattr(api, 'items') else []:
             if not isinstance(node, dict):
@@ -234,7 +234,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "3.20", "Tab completion: dir(flow.nodes) includes class_types", t_3_20)
 
     def t_3_21():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         d = dir(ks)
         assert "seed" in d, f"'seed' not in dir(api.KSampler): {d}"

@@ -4,7 +4,7 @@ autoflow takes a ComfyUI **workspace** `workflow.json` and converts it into a Co
 
 ```mermaid
 flowchart LR
-  workflowJson["workflow.json (workspace)"] --> flowObj["Flow / Workflow"]
+  workflowJson["workflow.json (workspace)"] --> flowObj["Flow / ApiFlow"]
   objectInfo["node_info.json (optional)"] --> flowObj
   flowObj --> apiFlow["ApiFlow (API payload)"]
   apiFlow --> saveApi["save(workflow-api.json)"]
@@ -45,10 +45,10 @@ ksamplers[0].widgets_values[0] = 123  # seed (workspace uses widgets_values list
 In an `ApiFlow`, subgraphs are already flattened. You can edit by node type, by node id/path, or by searching:
 
 ```python
-from autoflow import Workflow, ApiFlow
+from autoflow import ApiFlow
 
-# Convert workspace → API payload
-api = Workflow("workflow.json", node_info="node_info.json")
+# Convert workspace → API payload (ApiFlow auto-detects workspace format)
+api = ApiFlow("workflow.json", node_info="node_info.json")
 
 # Find and edit nodes by class_type
 api.find(class_type="KSampler")[0].seed = 123
@@ -65,7 +65,7 @@ Convert `workflow.json` by fetching schema from a running ComfyUI server.
 
 ```mermaid
 flowchart LR
-  env["AUTOFLOW_COMFYUI_SERVER_URL"] --> workflowObj["Workflow(...)"]
+  env["AUTOFLOW_COMFYUI_SERVER_URL"] --> workflowObj["ApiFlow(...)"]
   comfy["ComfyUI server"] --> objectInfo["/object_info"]
   objectInfo --> workflowObj
   workflowObj --> apiFlow["ApiFlow"]
@@ -74,10 +74,10 @@ flowchart LR
 ```python
 # api
 import os
-from autoflow import Workflow
+from autoflow import ApiFlow
 
 os.environ["AUTOFLOW_COMFYUI_SERVER_URL"] = "http://localhost:8188"
-api = Workflow("workflow.json")
+api = ApiFlow("workflow.json")
 api.save("workflow-api.json")
 ```
 
@@ -91,16 +91,16 @@ python -m autoflow --input-path workflow.json --output-path workflow-api.json
 
 If you're running inside a ComfyUI environment (repo + venv), you can convert using local node modules:
 
-**Environment note**: this requires ComfyUI’s Python modules to be importable (same venv/conda env you run ComfyUI with, and ComfyUI repo root on `PYTHONPATH` or as your working directory).
+**Environment note**: this requires ComfyUI's Python modules to be importable (same venv/conda env you run ComfyUI with, and ComfyUI repo root on `PYTHONPATH` or as your working directory).
 
 Related:
 - Serverless execution (no ComfyUI HTTP server): [`execute.md`](execute.md)
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="modules")
+api = ApiFlow("workflow.json", node_info="modules")
 api.save("workflow-api.json")
 ```
 
@@ -112,16 +112,16 @@ Convert `workflow.json` using a saved `node_info.json` (reproducible; no server 
 
 ```mermaid
 flowchart LR
-  workflowJson["workflow.json"] --> workflowObj["Workflow(...)"]
+  workflowJson["workflow.json"] --> workflowObj["ApiFlow(...)"]
   objectInfo["node_info.json"] --> workflowObj
   workflowObj --> apiFlow["ApiFlow"]
 ```
 
 ```python
 # api
-from autoflow import Workflow
+from autoflow import ApiFlow
 
-api = Workflow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json", node_info="node_info.json")
 api.save("workflow-api.json")
 ```
 

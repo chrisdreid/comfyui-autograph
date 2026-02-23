@@ -23,7 +23,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Flow, Workflow
+    from autoflow import Flow, ApiFlow
 
     wf_path = str(_BUNDLED_WORKFLOW)
 
@@ -38,7 +38,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "16.1", "Flow dag.edges", t_16_1)
 
     def t_16_2():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         assert dag is not None, "api.dag is None"
         ed = dag.edges
@@ -47,7 +47,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "16.2", "ApiFlow dag.edges", t_16_2)
 
     def t_16_3():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         ed = dag.edges
         # Find edges that point TO a KSampler node
@@ -59,7 +59,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "16.3", "dag.edges pointing to KSampler", t_16_3)
 
     def t_16_4():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         nd = dag.nodes
         ed = dag.edges
@@ -69,7 +69,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "16.4", "dag.nodes + dag.edges populated", t_16_4)
 
     def t_16_5():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         dot = dag.to_dot()
         assert isinstance(dot, str), f"to_dot() returned {type(dot)}"
@@ -78,7 +78,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "16.5", "dag.to_dot()", t_16_5)
 
     def t_16_6():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         mm = dag.to_mermaid()
         assert isinstance(mm, str), f"to_mermaid() returned {type(mm)}"
@@ -96,7 +96,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "16.7", "dag.nodes", t_16_7)
 
     def t_16_8():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         save_nodes = api.find(class_type="SaveImage")
         if save_nodes:

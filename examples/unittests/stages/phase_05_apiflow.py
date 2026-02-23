@@ -31,11 +31,11 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Workflow, ApiFlow, NodeInfo
+    from autoflow import ApiFlow, NodeInfo
     from autoflow import map_strings, map_paths, force_recompute, api_mapping
 
     wf_path = str(_BUNDLED_WORKFLOW)
-    api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+    api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
 
     # ===================================================================
     # 5.1–5.12  ApiFlow node proxy  (was stage 12)
@@ -55,7 +55,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "5.2", "api.KSampler.seed", t_5_2)
 
     def t_5_3():
-        api2 = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api2 = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         api2.KSampler.seed = 42
         val = api2.KSampler.seed
         actual = int(val) if hasattr(val, '__int__') else val
@@ -101,7 +101,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "5.9", "api.unwrap() returns raw dict", t_5_9)
 
     def t_5_10():
-        api2 = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api2 = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         api2.KSampler.steps = 100
         api2.KSampler.cfg = 12.5
         assert int(api2.KSampler.steps) == 100
@@ -234,7 +234,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "5.24", "find returns empty for missing type", t_5_24)
 
     def t_5_25():
-        api2 = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api2 = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         api2.KSampler.seed = 9999
         ks = api2.find(class_type="KSampler")
         assert len(ks) >= 1
@@ -296,7 +296,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # ===================================================================
 
     def t_5_30():
-        api2 = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api2 = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api2.unwrap()))
         spec = {"replacements": {"literal": {"Default": "MAPPED"}}}
         result = map_strings(raw, spec)
@@ -306,7 +306,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "5.30", "map_strings literal replacement", t_5_30)
 
     def t_5_31():
-        api2 = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api2 = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api2.unwrap()))
         spec = {"replacements": {"regex": {"output_\\d+": "gen_img"}}}
         result = map_strings(raw, spec)
@@ -318,7 +318,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "5.31", "map_strings regex replacement", t_5_31)
 
     def t_5_32():
-        api2 = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api2 = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api2.unwrap()))
         os.environ["_AF_TEST_MAP"] = "env_expanded"
         try:
@@ -332,7 +332,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "5.32", "map_strings env expansion", t_5_32)
 
     def t_5_33():
-        api2 = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api2 = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api2.unwrap()))
         spec = {"replacements": {"file": "/tmp/_af_test_rules.txt"}}
         Path("/tmp/_af_test_rules.txt").write_text("Default=FILE_MAPPED\n", encoding="utf-8")
@@ -347,7 +347,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "5.33", "map_strings file rules", t_5_33)
 
     def t_5_34():
-        api2 = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api2 = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = copy.deepcopy(dict(api2.unwrap()))
         spec = {"replacements": {"literal": {"/old/path": "/new/path"}}}
         result = map_paths(raw, spec)
@@ -356,7 +356,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "5.34", "map_paths(flow, spec)", t_5_34)
 
     def t_5_35():
-        api2 = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api2 = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         result = force_recompute(api2)
         assert result is not None
         return {"input": "force_recompute(api)", "output": type(result).__name__, "result": "✓ cache-bust"}
@@ -382,7 +382,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     def t_5_37():
         ni_p = builtin_node_info_path()
-        api2 = Workflow(str(_BUNDLED_WORKFLOW), node_info=ni_p)
+        api2 = ApiFlow(str(_BUNDLED_WORKFLOW), node_info=ni_p)
         assert isinstance(api2, ApiFlow)
         api2["ksampler/seed"] = 123
         assert api2.ksampler[0].seed == 123

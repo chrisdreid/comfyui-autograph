@@ -1,4 +1,4 @@
-"""Phase 4 — Conversion: Workflow factory, MarkdownNote strip, subgraphs, DAG, save/format.
+"""Phase 4 — Conversion: ApiFlow auto-detect, MarkdownNote strip, subgraphs, DAG, save/format.
 
 Merged from: stage_02_convert_metadata, stage_15_workflow_factory,
              stage_16_dag, stage_18_save_formatting, stage_21_subgraphs
@@ -32,7 +32,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Flow, Workflow, ApiFlow, convert_with_errors
+    from autoflow import Flow, ApiFlow, convert_with_errors
     from autoflow.api import convert_workflow, _sanitize_api_prompt
 
     wf_path = str(_BUNDLED_WORKFLOW)
@@ -41,40 +41,40 @@ def run(collector: ResultCollector, **kwargs) -> None:
     wf_dict = json.loads(wf_str)
 
     # ===================================================================
-    # 4.1–4.3  Workflow factory  (was stage 15)
+    # 4.1–4.3  ApiFlow auto-detect  (was stage 15)
     # ===================================================================
 
     def t_4_1():
-        api = Workflow(wf_dict, node_info=BUILTIN_NODE_INFO)
-        assert isinstance(api, ApiFlow), f"Workflow(dict) returned {type(api)}"
-        return {"input": f"Workflow(dict, {len(wf_dict)} keys)", "output": f"ApiFlow len={len(api)}", "result": "✓ dict input"}
-    _run_test(collector, stage, "4.1", "Workflow(dict) → ApiFlow", t_4_1)
+        api = ApiFlow(wf_dict, node_info=BUILTIN_NODE_INFO)
+        assert isinstance(api, ApiFlow), f"ApiFlow(dict) returned {type(api)}"
+        return {"input": f"ApiFlow(dict, {len(wf_dict)} keys)", "output": f"ApiFlow len={len(api)}", "result": "✓ dict input"}
+    _run_test(collector, stage, "4.1", "ApiFlow(dict) → ApiFlow", t_4_1)
 
     def t_4_2():
-        api = Workflow(wf_str, node_info=BUILTIN_NODE_INFO)
-        assert isinstance(api, ApiFlow), f"Workflow(JSON str) returned {type(api)}"
-        return {"input": f"Workflow(str, {len(wf_str)} chars)", "output": f"ApiFlow len={len(api)}", "result": "✓ JSON string"}
-    _run_test(collector, stage, "4.2", "Workflow(JSON string) → ApiFlow", t_4_2)
+        api = ApiFlow(wf_str, node_info=BUILTIN_NODE_INFO)
+        assert isinstance(api, ApiFlow), f"ApiFlow(JSON str) returned {type(api)}"
+        return {"input": f"ApiFlow(str, {len(wf_str)} chars)", "output": f"ApiFlow len={len(api)}", "result": "✓ JSON string"}
+    _run_test(collector, stage, "4.2", "ApiFlow(JSON string) → ApiFlow", t_4_2)
 
     def t_4_3():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
-        assert isinstance(api, ApiFlow), f"Workflow(path) returned {type(api)}"
-        return {"input": f"Workflow({Path(wf_path).name})", "output": f"ApiFlow len={len(api)}", "result": "✓ path input"}
-    _run_test(collector, stage, "4.3", "Workflow(path) → ApiFlow", t_4_3)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
+        assert isinstance(api, ApiFlow), f"ApiFlow(path) returned {type(api)}"
+        return {"input": f"ApiFlow({Path(wf_path).name})", "output": f"ApiFlow len={len(api)}", "result": "✓ path input"}
+    _run_test(collector, stage, "4.3", "ApiFlow(path) → ApiFlow", t_4_3)
 
     # ===================================================================
     # 4.4–4.15  Convert metadata  (was stage 2)
     # ===================================================================
 
     def t_4_4():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
-        assert api is not None, "Workflow() returned None"
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
+        assert api is not None, "ApiFlow() returned None"
         assert hasattr(api, "items"), "Converted result has no items()"
-        return {"input": f"Workflow({Path(wf_path).name})", "output": type(api).__name__, "result": "✓ converted"}
-    _run_test(collector, stage, "4.4", "Workflow(path, node_info) produces ApiFlow", t_4_4)
+        return {"input": f"ApiFlow({Path(wf_path).name})", "output": type(api).__name__, "result": "✓ converted"}
+    _run_test(collector, stage, "4.4", "ApiFlow(path, node_info) produces ApiFlow", t_4_4)
 
     def t_4_5():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = getattr(api, "unwrap", lambda: api)()
         if hasattr(raw, "items"):
             node_count = sum(1 for _, v in raw.items() if isinstance(v, dict) and "class_type" in v)
@@ -85,14 +85,14 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.5", "MarkdownNotes stripped → 7 API nodes", t_4_5)
 
     def t_4_6():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         seed = api.KSampler.seed
         assert seed is not None, "api.KSampler.seed is None"
         return {"input": "api.KSampler.seed", "output": str(seed), "result": "✓ dot-access works"}
     _run_test(collector, stage, "4.6", "ApiFlow dot-access: api.KSampler.seed", t_4_6)
 
     def t_4_7():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         try:
             val = api["3"]
             assert val is not None, "api['3'] returned None"
@@ -103,12 +103,12 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.7", "Path-style access: api['3']", t_4_7)
 
     def t_4_8():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         j = api.to_json()
         parsed = json.loads(j)
-        assert isinstance(parsed, dict), "Workflow→to_json() is not a valid dict"
-        return {"input": "Workflow→to_json()", "output": f"{len(j)} chars, {len(parsed)} keys", "result": "✓ valid JSON"}
-    _run_test(collector, stage, "4.8", "Workflow one-liner → to_json()", t_4_8)
+        assert isinstance(parsed, dict), "ApiFlow→to_json() is not a valid dict"
+        return {"input": "ApiFlow→to_json()", "output": f"{len(j)} chars, {len(parsed)} keys", "result": "✓ valid JSON"}
+    _run_test(collector, stage, "4.8", "ApiFlow one-liner → to_json()", t_4_8)
 
     def t_4_9():
         f = Flow.load(str(_BUNDLED_WORKFLOW))
@@ -122,7 +122,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.9", "convert_with_errors() returns result", t_4_9)
 
     def t_4_10():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         try:
             meta = ks._meta
@@ -143,7 +143,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.11", "Set _meta on Flow node (no crash)", t_4_11)
 
     def t_4_12():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = getattr(api, "unwrap", lambda: api)()
         for nid, node in (raw.items() if hasattr(raw, 'items') else api.items()):
             if isinstance(node, dict) and node.get("class_type") == "KSampler":
@@ -161,7 +161,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.12", "_meta survives to_json()", t_4_12)
 
     def t_4_13():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         try:
             choices = ks.sampler_name.choices()
@@ -179,7 +179,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.13", "Widget introspection: .choices()", t_4_13)
 
     def t_4_14():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         try:
             sv = ks.seed
@@ -194,7 +194,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.14", "Widget introspection: .tooltip()", t_4_14)
 
     def t_4_15():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = api.KSampler
         try:
             sv = ks.seed
@@ -221,7 +221,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.16", "Flow dag.edges", t_4_16)
 
     def t_4_17():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         assert dag is not None
         ed = dag.edges
@@ -230,7 +230,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.17", "ApiFlow dag.edges", t_4_17)
 
     def t_4_18():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         ed = dag.edges
         ks_nodes = api.find(class_type="KSampler")
@@ -241,7 +241,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.18", "dag.edges pointing to KSampler", t_4_18)
 
     def t_4_19():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         nd = dag.nodes
         ed = dag.edges
@@ -250,7 +250,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.19", "dag.nodes + dag.edges populated", t_4_19)
 
     def t_4_20():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         dot = dag.to_dot()
         assert isinstance(dot, str) and "digraph" in dot.lower()
@@ -259,7 +259,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.20", "dag.to_dot()", t_4_20)
 
     def t_4_21():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         mm = dag.to_mermaid()
         assert isinstance(mm, str) and ("graph" in mm.lower() or "flowchart" in mm.lower())
@@ -276,7 +276,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.22", "dag.nodes", t_4_22)
 
     def t_4_23():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         dag = api.dag
         save_nodes = api.find(class_type="SaveImage")
         if save_nodes:
@@ -291,7 +291,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # ===================================================================
 
     def t_4_24():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         j = api.to_json()
         parsed = json.loads(j)
         assert isinstance(parsed, dict) and len(parsed) > 0
@@ -299,7 +299,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.24", "ApiFlow.to_json() round-trip", t_4_24)
 
     def t_4_25():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         j = api.to_json(indent=2)
         assert "\n" in j
         lines = j.count("\n")
@@ -307,7 +307,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.25", "ApiFlow.to_json(indent=2)", t_4_25)
 
     def t_4_26():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
             tmp = f.name
             api.save(tmp)
@@ -320,7 +320,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.26", "ApiFlow.save() to temp file", t_4_26)
 
     def t_4_27():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         save_nodes = api.find(class_type="SaveImage")
         if not save_nodes:
             return {"input": "find(SaveImage)", "output": "none found", "result": "✓ no save node"}
@@ -330,7 +330,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.27", "SaveImage filename_prefix access", t_4_27)
 
     def t_4_28():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = dict(api.unwrap()) if hasattr(api, 'unwrap') else dict(api)
         for nid, node in raw.items():
             if isinstance(node, dict) and node.get("class_type") == "SaveImage":
@@ -341,7 +341,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "4.28", "SaveImage raw inputs dict", t_4_28)
 
     def t_4_29():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = dict(api.unwrap()) if hasattr(api, 'unwrap') else dict(api)
         ct_list = sorted({n.get("class_type") for n in raw.values() if isinstance(n, dict) and "class_type" in n})
         assert len(ct_list) > 0

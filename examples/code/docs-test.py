@@ -129,8 +129,10 @@ class Example:
     block_index: int
     lang: str
     needs_network: bool
+    needs_comfyui_runtime: bool
     can_exec_python: bool
     can_run_cli: bool
+    continued: bool  # True when block starts with "# continued"
 
 
 EXAMPLES: Dict[str, Example] = {}
@@ -380,6 +382,19 @@ def _looks_needs_comfyui_runtime(text: str) -> bool:
     return any(n in text for n in needles)
 
 
+def _looks_incomplete_snippet(text: str) -> bool:
+    """Return True for very short illustrative snippets that reference
+    variables not defined in the snippet (e.g. ``res = flow.execute()``
+    appearing inside explanatory prose)."""
+    lines = [ln for ln in text.strip().splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    if len(lines) > 2:
+        return False
+    # No import statement → variables must come from somewhere else
+    if any(ln.strip().startswith(("import ", "from ")) for ln in lines):
+        return False
+    return True
+
+
 def _looks_needs_optional_deps(text: str) -> bool:
     """Return True if snippet requires optional dependencies like Pillow."""
     needles = [
@@ -571,9 +586,9 @@ def _make_sandbox(
     if make_api_payload:
         # Create workflow-api.json using offline conversion.
         # Import locally to keep this script usable even if autoflow isn't installed (repo-local usage).
-        from autoflow import Workflow  # type: ignore
+        from autoflow import ApiFlow  # type: ignore
 
-        api = Workflow(str(wf), node_info=str(oi))
+        api = ApiFlow(str(wf), node_info=str(oi))
         api.save(str(wf_api))
 
     # Ensure PNG samples contain ComfyUI-style metadata so docs snippets that use Flow.load(ApiFlow.load)
@@ -759,8 +774,16 @@ def _run_python_block(
         return
 
     if _looks_needs_comfyui_runtime(code):
-        print("[python] compile: ok (exec skipped: needs ComfyUI runtime)")
-        return
+        # Check if ComfyUI modules are actually available
+        try:
+            import comfy.samplers  # noqa: F401
+        except ImportError:
+            print("[python] compile: ok (exec skipped: needs ComfyUI environment)")
+            return
+        # Incomplete snippets (1-2 lines, no imports) are illustrative prose
+        if _looks_incomplete_snippet(code):
+            print("[python] compile: ok (exec skipped: illustrative snippet)")
+            return
 
     if _looks_needs_optional_deps(code):
         # Check if Pillow is actually available
@@ -972,7 +995,7 @@ def e2e_server_roundtrip(
     sb_wf.write_text(_read_text(wf_path), encoding="utf-8")
 
     # Import locally (repo-local usage).
-    from autoflow import Workflow, ApiFlow, Flow  # type: ignore
+    from autoflow import ApiFlow, Flow  # type: ignore
 
     def _apply_prompt_and_seed(api: Dict[str, Any]) -> Dict[str, Any]:
         a = api if isinstance(api, ApiFlow) else ApiFlow(api, node_info=str(oi_path))
@@ -1027,7 +1050,7 @@ def e2e_server_roundtrip(
         return bytes(b)
 
     # Run 1: template workflow -> api -> submit -> image
-    api1 = Workflow(str(sb_wf), node_info=str(oi_path))
+    api1 = ApiFlow(str(sb_wf), node_info=str(oi_path))
     api1 = _apply_prompt_and_seed(api1)  # type: ignore[assignment]
     b1 = _submit_and_first_image_bytes(api1)  # type: ignore[arg-type]
     img1_path = run_dir / "render-1.png"
@@ -1095,6 +1118,7 @@ def _register_doc_blocks(
             needs_network = _looks_networky(code)
             can_exec_python = (lang2 == "python")
             can_run_cli = (lang2 == "bash")
+            continued = code.lstrip().startswith("# continued")
 
             def _make_fn(_code: str, _label: str, _lang: str) -> ExampleFn:
                 def _fn(
@@ -1209,8 +1233,10 @@ def _register_doc_blocks(
                 block_index=n,
                 lang=lang2 or "text",
                 needs_network=needs_network,
+                needs_comfyui_runtime=_looks_needs_comfyui_runtime(code),
                 can_exec_python=can_exec_python,
                 can_run_cli=can_run_cli,
+                continued=continued,
             )
 
     # Add a hand-written E2E test (not derived from docs fences).
@@ -1224,8 +1250,10 @@ def _register_doc_blocks(
             block_index=0,
             lang="python",
             needs_network=True,
+            needs_comfyui_runtime=False,
             can_exec_python=True,
             can_run_cli=False,
+            continued=False,
         )
 
 

@@ -362,7 +362,7 @@ TEST_CATALOG: Dict[str, Dict[str, str]] = {
     "0.1": {"desc": "Verify autoflow package can be imported", "inputs": "Python module path", "outputs": "Module object"},
     "0.2": {"desc": "Version string follows semver (major.minor[.patch])", "inputs": "autoflow.__version__", "outputs": "Validated version string"},
     "0.3": {"desc": "All public API symbols exist in autoflow namespace", "inputs": "Expected symbol list (Flow, ApiFlow, Workflow, etc.)", "outputs": "All symbols found or list of missing",
-            "code": "from autoflow import Flow, Workflow, NodeInfo, convert, map_strings"},
+            "code": "from autoflow import Flow, ApiFlow, Workflow, NodeInfo, convert, map_strings"},
     "0.4": {"desc": "Bundled workflow.json can be loaded as a Flow object", "inputs": "examples/workflows/workflow.json", "outputs": "Flow object with nodes"},
     "0.5": {"desc": "Built-in node_info dict contains the 6 standard ComfyUI node classes", "inputs": "BUILTIN_NODE_INFO dict (KSampler, CLIPTextEncode, etc.)", "outputs": "NodeInfo object"},
 
@@ -381,7 +381,7 @@ TEST_CATALOG: Dict[str, Dict[str, str]] = {
     "1.8": {"desc": "Access multiple instances of the same node type via indexing", "inputs": "flow.nodes.CLIPTextEncode[0]", "outputs": "Individual node instances",
             "code": "clip_pos = flow.nodes.CLIPTextEncode[0]\nclip_neg = flow.nodes.CLIPTextEncode[1]"},
     "1.9": {"desc": "Read widget values on a converted API node using dot notation", "inputs": "api.KSampler.seed", "outputs": "Widget value (int/float/str)",
-            "code": "api = Workflow('wf.json', node_info=ni)\nseed = api.KSampler.seed"},
+            "code": "api = ApiFlow('wf.json', node_info=ni)\nseed = api.KSampler.seed"},
     "1.10": {"desc": "List all widget attribute names for a node", "inputs": "node.attrs()", "outputs": "List of widget names ['seed', 'steps', ...]",
              "code": "attrs = api.KSampler.attrs()  # ['seed', 'steps', 'cfg', ...]"},
     "1.11": {"desc": "Set a widget value via dot notation and verify it persists", "inputs": "api.KSampler.seed = 42", "outputs": "Updated seed value = 42",
@@ -396,11 +396,11 @@ TEST_CATALOG: Dict[str, Dict[str, str]] = {
 
     # Stage 2: Convert + Metadata
     "2.1": {"desc": "Convert a Flow workflow to API format using node_info", "inputs": "workflow.json + node_info", "outputs": "ApiFlow (API-format dict with inputs resolved)",
-            "code": "api = Workflow('wf.json', node_info=node_info)"},
+            "code": "api = ApiFlow('wf.json', node_info=node_info)"},
     "2.2": {"desc": "Non-API nodes (MarkdownNote) are stripped during conversion", "inputs": "11-node workflow (4 MarkdownNote + 7 real)", "outputs": "7 API nodes (MarkdownNotes removed)"},
     "2.3": {"desc": "Access converted node widgets via dot notation", "inputs": "api.KSampler.seed", "outputs": "Seed value from API dict"},
     "2.4": {"desc": "Access raw API node dict by node ID string", "inputs": "api['3']", "outputs": "Node dict with class_type, inputs"},
-    "2.5": {"desc": "Convert workflow and serialize to JSON in one step", "inputs": "Workflow(path, node_info)", "outputs": "JSON string ready for ComfyUI /prompt API"},
+    "2.5": {"desc": "Convert workflow and serialize to JSON in one step", "inputs": "ApiFlow(path, node_info)", "outputs": "JSON string ready for ComfyUI /prompt API"},
     "2.6": {"desc": "Convert with error reporting — returns ok, data, errors, warnings", "inputs": "Flow + node_info", "outputs": "ConvertResult with .ok, .data, .errors",
             "code": "result = convert_with_errors(flow, node_info=ni)\nif result.ok: api = result.data"},
     "2.7": {"desc": "Access _meta dict on API nodes (autoflow metadata)", "inputs": "api.KSampler._meta", "outputs": "Dict or None"},
@@ -424,7 +424,7 @@ TEST_CATALOG: Dict[str, Dict[str, str]] = {
     "3.9": {"desc": "Get the hierarchical path of a found node", "inputs": "result.path()", "outputs": "Path string like 'KSampler'"},
     "3.10": {"desc": "Get the addressable location of a found node", "inputs": "result.address()", "outputs": "Address string"},
     "3.11": {"desc": "Find on ApiFlow by class_type", "inputs": "api.find(class_type='KSampler')", "outputs": "Matching API nodes",
-             "code": "api = Workflow('wf.json', node_info=ni)\nresults = api.find(class_type='KSampler')"},
+             "code": "api = ApiFlow('wf.json', node_info=ni)\nresults = api.find(class_type='KSampler')"},
     "3.13": {"desc": "Direct node lookup by string ID on ApiFlow", "inputs": "api.by_id('3')", "outputs": "Node dict for ID '3'"},
 
     # Stage 4: Mapping
@@ -444,7 +444,7 @@ TEST_CATALOG: Dict[str, Dict[str, str]] = {
     "6.1": {"desc": "Verify ComfyUI server is reachable via HTTP", "inputs": "Server URL (e.g. http://localhost:8188)", "outputs": "HTTP 200 response"},
     "6.2": {"desc": "Fetch live node_info from running ComfyUI server", "inputs": "NodeInfo.fetch(server_url=...)", "outputs": "Full node_info dict (~100+ node types)",
             "code": "ni = NodeInfo.fetch(server_url='http://localhost:8188')"},
-    "6.3": {"desc": "Convert workflow using live server node_info", "inputs": "Workflow(path, server_url=...)", "outputs": "ApiFlow with live node specs"},
+    "6.3": {"desc": "Convert workflow using live server node_info", "inputs": "ApiFlow(path, server_url=...)", "outputs": "ApiFlow with live node specs"},
 
     # Stage 7: Tools
     "7.1": {"desc": "Verify PIL/Pillow can create, save, and reload images", "inputs": "PIL.Image.new('RGB', (64,64))", "outputs": "64×64 red PNG image"},

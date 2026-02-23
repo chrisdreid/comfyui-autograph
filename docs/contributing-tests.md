@@ -42,7 +42,7 @@ flowchart TD
 | 12 | ApiFlow + NodeProxy | 12 | — |
 | 13 | NodeInfo | 8 | — |
 | 14 | DictView / ListView | 10 | — |
-| 15 | Workflow factory | 4 | — |
+| 15 | ApiFlow auto-detect | 4 | — |
 
 ## Running
 

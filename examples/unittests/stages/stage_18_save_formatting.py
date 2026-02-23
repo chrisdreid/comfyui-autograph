@@ -24,12 +24,12 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Workflow
+    from autoflow import ApiFlow
 
     wf_path = str(_BUNDLED_WORKFLOW)
 
     def t_18_1():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         j = api.to_json()
         parsed = json.loads(j)
         assert isinstance(parsed, dict), f"to_json() produced {type(parsed)}"
@@ -38,7 +38,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "18.1", "ApiFlow.to_json() round-trip", t_18_1)
 
     def t_18_2():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         j = api.to_json(indent=2)
         assert "\n" in j, "Indented JSON should have newlines"
         lines = j.count("\n")
@@ -46,7 +46,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "18.2", "ApiFlow.to_json(indent=2)", t_18_2)
 
     def t_18_3():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         import tempfile, os
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
             tmp = f.name
@@ -61,7 +61,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "18.3", "ApiFlow.save() to temp file", t_18_3)
 
     def t_18_4():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         save_nodes = api.find(class_type="SaveImage")
         if not save_nodes:
             return {"input": "find(SaveImage)", "output": "none found", "result": "✓ no save node"}
@@ -71,7 +71,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "18.4", "SaveImage filename_prefix access", t_18_4)
 
     def t_18_5():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = dict(api.unwrap()) if hasattr(api, 'unwrap') else dict(api)
         for nid, node in raw.items():
             if isinstance(node, dict) and node.get("class_type") == "SaveImage":
@@ -82,7 +82,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "18.5", "SaveImage raw inputs dict", t_18_5)
 
     def t_18_6():
-        api = Workflow(wf_path, node_info=BUILTIN_NODE_INFO)
+        api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         raw = dict(api.unwrap()) if hasattr(api, 'unwrap') else dict(api)
         ct_list = sorted({n.get("class_type") for n in raw.values() if isinstance(n, dict) and "class_type" in n})
         assert len(ct_list) > 0, "No class_types found"
