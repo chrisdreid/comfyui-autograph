@@ -629,6 +629,7 @@ _CORE_NODES_THRESHOLD = 100
 def _fix_comfyui_imports() -> None:
     """Fix import-shadowing issues before loading extra nodes.
 
+    **Problem 1 – ``utils`` shadowing:**
     ComfyUI has a top-level ``utils/`` package (with ``utils/install_util.py``
     etc.) that is required by ``server.py`` → ``app/frontend_management.py``.
     However, importing ``comfy.utils`` (which happens early when loading
@@ -638,43 +639,110 @@ def _fix_comfyui_imports() -> None:
     ``from server import PromptServer`` to fail with
     ``"'utils' is not a package"``.
 
-    This function detects the ComfyUI root and pre-registers the correct
-    ``utils`` package in ``sys.modules`` so downstream imports work.
+    **Problem 2 – ``PromptServer.instance``:**
+    Several custom nodes access ``PromptServer.instance`` at *import time*
+    (e.g. to register routes or prompt handlers).  Outside the server,
+    ``PromptServer()`` is never constructed so ``.instance`` doesn't exist.
+    We set a lightweight stub so those module-level accesses don't crash.
     """
     import importlib
     import importlib.util
 
-    # If utils is already correctly imported as a package, nothing to do.
+    # ── Fix 1: utils package ──────────────────────────────────────────
     existing = sys.modules.get("utils")
-    if existing is not None and hasattr(existing, "__path__"):
-        return
+    if existing is None or not hasattr(existing, "__path__"):
+        root = _detect_comfyui_root_from_imports()
+        if root is not None:
+            utils_init = root / "utils" / "__init__.py"
+            if utils_init.is_file():
+                spec = importlib.util.spec_from_file_location(
+                    "utils",
+                    str(utils_init),
+                    submodule_search_locations=[str(root / "utils")],
+                )
+                if spec is not None and spec.loader is not None:
+                    mod = importlib.util.module_from_spec(spec)
+                    sys.modules["utils"] = mod
+                    try:
+                        spec.loader.exec_module(mod)
+                    except Exception:
+                        pass
 
-    # Find the ComfyUI root that contains utils/__init__.py
-    root = _detect_comfyui_root_from_imports()
-    if root is None:
-        return
+    # ── Fix 2: PromptServer.instance stub ─────────────────────────────
+    _ensure_promptserver_instance()
 
-    utils_init = root / "utils" / "__init__.py"
-    if not utils_init.is_file():
-        return
 
-    # Import the correct utils package and register it
-    spec = importlib.util.spec_from_file_location(
-        "utils",
-        str(utils_init),
-        submodule_search_locations=[str(root / "utils")],
-    )
-    if spec is None or spec.loader is None:
-        return
+class _NoOpProxy:
+    """A proxy that silently absorbs any attribute access or call.
 
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["utils"] = mod
+    Used to stub out ``PromptServer.instance`` so that custom nodes which
+    access ``.routes``, ``.prompt_queue``, etc. at import time don't crash.
+    """
+
+    def __getattr__(self, name: str) -> "_NoOpProxy":
+        return _NoOpProxy()
+
+    def __call__(self, *args: object, **kwargs: object) -> "_NoOpProxy":
+        return _NoOpProxy()
+
+    def __bool__(self) -> bool:
+        return False
+
+
+class _AutoRoutes:
+    """Mock for ``aiohttp.web.RouteTableDef`` that returns no-op decorators.
+
+    Custom nodes use ``@PromptServer.instance.routes.post("/path")`` to
+    register HTTP routes at import time.  This stub returns the decorated
+    function unchanged.
+    """
+
+    def _noop_decorator(self, path: str, **kw: object):  # type: ignore
+        def decorator(fn):  # type: ignore
+            return fn
+        return decorator
+
+    # Cover all HTTP methods custom nodes might use.
+    get = post = put = delete = patch = _noop_decorator
+    static = _noop_decorator
+
+    def __iter__(self):  # type: ignore
+        return iter([])
+
+
+def _ensure_promptserver_instance() -> None:
+    """Set ``PromptServer.instance`` to a stub if the server isn't running."""
     try:
-        spec.loader.exec_module(mod)
-    except Exception:
-        # If it fails, at least the module is registered; submodule
-        # imports may still work since we set submodule_search_locations.
-        pass
+        from server import PromptServer  # type: ignore
+    except ImportError:
+        return
+
+    if getattr(PromptServer, "instance", None) is not None:
+        return  # Server is running – nothing to do.
+
+    # Build a lightweight stub instance.
+    class _StubInstance:
+        routes = _AutoRoutes()
+        prompt_queue = None
+        client_session = None
+        number = 0
+
+        @staticmethod
+        def add_on_prompt_handler(handler):  # type: ignore
+            pass
+
+        @staticmethod
+        def send_progress_text(*args, **kwargs):  # type: ignore
+            pass
+
+        @staticmethod
+        def send_sync(*args, **kwargs):  # type: ignore
+            pass
+
+        def __getattr__(self, name: str):  # type: ignore
+            return _NoOpProxy()
+
+    PromptServer.instance = _StubInstance()  # type: ignore
 
 
 def _ensure_extra_nodes_loaded() -> None:
