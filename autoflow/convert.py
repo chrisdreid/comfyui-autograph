@@ -798,7 +798,24 @@ def _ensure_extra_nodes_loaded() -> None:
         len(NODE_CLASS_MAPPINGS),
     )
     try:
-        asyncio.run(init_extra_nodes())
+        # Suppress background threads spawned at import time by custom nodes
+        # (e.g. ComfyUI-Manager's registry fetch).  These serve no purpose
+        # when we're only importing nodes to inspect their class mappings.
+        import threading
+
+        _real_thread_start = threading.Thread.start
+
+        def _suppressed_start(self_thread: threading.Thread) -> None:  # type: ignore
+            logging.debug(
+                "autoflow: suppressed background thread %r during init_extra_nodes()",
+                self_thread.name,
+            )
+
+        threading.Thread.start = _suppressed_start  # type: ignore
+        try:
+            asyncio.run(init_extra_nodes())
+        finally:
+            threading.Thread.start = _real_thread_start  # type: ignore
     except Exception as exc:
         logging.warning("autoflow: init_extra_nodes() failed: %s", exc)
     finally:
