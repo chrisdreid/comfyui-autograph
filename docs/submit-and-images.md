@@ -46,7 +46,7 @@ flowchart LR
 # api
 from autoflow import ApiFlow
 
-api = ApiFlow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(server_url="http://localhost:8188", wait=False)
 print(res.prompt_id)  # job handle
 ```
@@ -80,7 +80,7 @@ flowchart LR
 # api
 from autoflow import ApiFlow
 
-api = ApiFlow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(server_url="http://localhost:8188", wait=True)
 images = res.fetch_images()
 images.save("outputs/frame.###.png")
@@ -94,7 +94,7 @@ Use `fetch_outputs=True` to fetch images during submit (saves an extra call).
 # api
 from autoflow import ApiFlow
 
-api = ApiFlow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(
     server_url="http://localhost:8188",
     wait=True,
@@ -119,7 +119,7 @@ WebSocket idle timeout:
 # api
 from autoflow import ApiFlow
 
-api = ApiFlow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(
     server_url="http://localhost:8188",
     wait=True,
@@ -227,7 +227,7 @@ images.save("outputs", filename="render.{src_frame:03d}.png")
 # api
 from autoflow import ApiFlow
 
-api = ApiFlow("workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json")
 res = api.submit(server_url="http://localhost:8188", wait=True)
 images = res.fetch_images(include_bytes=True)
 
