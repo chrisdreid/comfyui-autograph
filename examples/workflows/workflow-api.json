@@ -1,0 +1,86 @@
+{
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "Default",
+      "images": [
+        "8",
+        0
+      ]
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": " B C D E G H I J K M N P Q R S V X Y Z\nCurves, splines",
+      "clip": [
+        "4",
+        1
+      ]
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "a sharp dark logo with the word \"autoflow\" in bold clean font, directly below the text is a geometric 3D logo  of glass nodes made of a glowing teal light, minimal flat design,photo realistic, 3d Render, dark background, professional, 4k \n\n text saying \"AUTOFLOW\" \"AutoFlow\", \"autoflow\", \"Auto Flow\", \"AUTO FLOW\"\n",
+      "clip": [
+        "4",
+        1
+      ]
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 696969,
+      "steps": 69,
+      "cfg": 6.9,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": [
+        "4",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    }
+  }
+}
