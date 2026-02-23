@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-02-23
+
+### Breaking Changes
+- **`Workflow` class deprecated** — `ApiFlow` is now the single entry point for loading both API payloads *and* workspace `workflow.json` files. `Workflow` remains as a thin compatibility alias that emits a `DeprecationWarning`.
+- `ApiFlow(x)` now auto-detects workspace-format workflows (with `nodes`/`links`) and converts them in-place — no need to call `Flow.convert()` first.
+
+### Added
+- **Auto-convert in `ApiFlow.__init__`** — pass a workspace `workflow.json` directly and it's converted to API format automatically (uses `node_info` from arg, env var, or server)
+- **README shields** — PyPI version, Python versions, MIT license, GitHub stars, issues, and download count badges
+- `needs_comfyui_runtime` attribute on doc test `Example` dataclass — enables per-block timeout tuning for serverless execution tests
+- `_looks_incomplete_snippet()` heuristic in doc test harness — skips one-liner illustrative prose blocks (e.g. `res = flow.execute()` appearing in explanatory sections)
+
+### Fixed
+- **Source metadata tracking** — `ApiFlow.__init__` auto-convert path now correctly sets `source` to `converted_from(file:...)` instead of raw `file:...`, matching the behavior of `Flow.convert()` (fixes tests 2.24/2.25)
+- Doc test timeouts for serverless `.execute()` blocks — increased from 15 s to 120 s (these load models + run inference)
+- Conditional ComfyUI runtime doc blocks — blocks requiring `comfy.*` modules now attempt the import and only skip if unavailable, allowing them to run in full ComfyUI environments
+
+### Changed
+- **Documentation overhaul:**
+  - `node-info-and-env.md` rewritten with "All Resolution Methods" comparison section (mermaid diagram, table, 4 step-by-step examples)
+  - `README.md` updated: all `Workflow` references → `ApiFlow`, mermaid diagrams and code examples refreshed
+  - 5 feature docs simplified: removed explicit `node_info="node_info.json"` from `force-recompute.md`, `map-strings-and-paths.md`, `mapping.md`, `progress-events.md`, `submit-and-images.md` (rely on default server-based resolution)
+  - `convert.md` and `load-vs-convert.md` kept as-is (intentionally teach different resolution methods)
+- Bumped version from 1.3.3 → 1.4.0
+
+### Deprecated
+- `Workflow` class — use `ApiFlow` directly. `Workflow(...)` still works but emits `DeprecationWarning` and will be removed in a future release.
+
+---
+
 ## [1.3.3] - 2026-02-23
 
 ### Fixed

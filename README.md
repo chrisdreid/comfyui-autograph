@@ -7,8 +7,15 @@ ComfyUI
 ██╔══██║██║   ██║   ██║   ██║   ██║██╔══╝  ██║     ██║   ██║██║███╗██║
 ██║  ██║╚██████╔╝   ██║   ╚██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝
 ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝ 
-                                                       version: 1.3.3
+                                                       version: 1.4.0
 ```
+
+[![PyPI version](https://img.shields.io/pypi/v/comfyui-autoflow?color=blue)](https://pypi.org/project/comfyui-autoflow/)
+[![Python](https://img.shields.io/pypi/pyversions/comfyui-autoflow)](https://pypi.org/project/comfyui-autoflow/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/chrisdreid/comfyui-autoflow/blob/main/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/chrisdreid/comfyui-autoflow?style=social)](https://github.com/chrisdreid/comfyui-autoflow)
+[![GitHub issues](https://img.shields.io/github/issues/chrisdreid/comfyui-autoflow)](https://github.com/chrisdreid/comfyui-autoflow/issues)
+[![Downloads](https://img.shields.io/pypi/dm/comfyui-autoflow)](https://pypi.org/project/comfyui-autoflow/)
 
 ```mermaid
 flowchart LR
