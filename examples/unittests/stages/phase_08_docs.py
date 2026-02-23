@@ -205,6 +205,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
             per_block_timeout = 15
             if ex.needs_network:
                 per_block_timeout = 30
+            if ex.needs_comfyui_runtime:
+                per_block_timeout = 120
 
             # Decide namespace: if block says "# continued" and we have a
             # previous namespace, reuse it.  Otherwise start fresh.

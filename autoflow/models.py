@@ -1289,7 +1289,7 @@ class ApiFlow(dict):
                     # Steal the converted data and metadata.
                     super().__init__(converted)
                     if isinstance(src, str) and src:
-                        object.__setattr__(self, "_autoflow_source", src)
+                        object.__setattr__(self, "_autoflow_source", f"converted_from({src})")
                     self.node_info = converted.node_info
                     self.use_api = converted.use_api if converted.use_api is not None else use_api
                     self.workflow_meta = converted.workflow_meta if converted.workflow_meta is not None else workflow_meta

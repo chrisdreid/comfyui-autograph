@@ -129,6 +129,7 @@ class Example:
     block_index: int
     lang: str
     needs_network: bool
+    needs_comfyui_runtime: bool
     can_exec_python: bool
     can_run_cli: bool
     continued: bool  # True when block starts with "# continued"
@@ -379,6 +380,19 @@ def _looks_needs_comfyui_runtime(text: str) -> bool:
         "import comfy",
     ]
     return any(n in text for n in needles)
+
+
+def _looks_incomplete_snippet(text: str) -> bool:
+    """Return True for very short illustrative snippets that reference
+    variables not defined in the snippet (e.g. ``res = flow.execute()``
+    appearing inside explanatory prose)."""
+    lines = [ln for ln in text.strip().splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    if len(lines) > 2:
+        return False
+    # No import statement → variables must come from somewhere else
+    if any(ln.strip().startswith(("import ", "from ")) for ln in lines):
+        return False
+    return True
 
 
 def _looks_needs_optional_deps(text: str) -> bool:
@@ -760,8 +774,16 @@ def _run_python_block(
         return
 
     if _looks_needs_comfyui_runtime(code):
-        print("[python] compile: ok (exec skipped: needs ComfyUI runtime)")
-        return
+        # Check if ComfyUI modules are actually available
+        try:
+            import comfy.samplers  # noqa: F401
+        except ImportError:
+            print("[python] compile: ok (exec skipped: needs ComfyUI environment)")
+            return
+        # Incomplete snippets (1-2 lines, no imports) are illustrative prose
+        if _looks_incomplete_snippet(code):
+            print("[python] compile: ok (exec skipped: illustrative snippet)")
+            return
 
     if _looks_needs_optional_deps(code):
         # Check if Pillow is actually available
@@ -1211,6 +1233,7 @@ def _register_doc_blocks(
                 block_index=n,
                 lang=lang2 or "text",
                 needs_network=needs_network,
+                needs_comfyui_runtime=_looks_needs_comfyui_runtime(code),
                 can_exec_python=can_exec_python,
                 can_run_cli=can_run_cli,
                 continued=continued,
@@ -1227,6 +1250,7 @@ def _register_doc_blocks(
             block_index=0,
             lang="python",
             needs_network=True,
+            needs_comfyui_runtime=False,
             can_exec_python=True,
             can_run_cli=False,
             continued=False,
