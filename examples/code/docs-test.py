@@ -148,10 +148,120 @@ DEFAULT_WORKFLOW = REPO_ROOT / "default.json"
 DEFAULT_NODE_INFO = REPO_ROOT / "node_info.json"
 DEFAULT_IMAGE = REPO_ROOT / "comfyui-image.png"
 
+# Known fixture fallback locations (checked in order)
+_FIXTURE_CANDIDATES = [
+    REPO_ROOT / "autoflow-test-suite" / "fixtures" / "logo-basic",
+    REPO_ROOT / "fixtures" / "logo-basic",
+]
+
+# Bundled workflow inside the package (last resort for default.json)
+_BUNDLED_WORKFLOW = REPO_ROOT / "autoflow" / "data" / "bundled-workflow.json"
+
 # Ensure repo-local imports work when running this script directly.
 # (When a script is executed, sys.path[0] is the script directory, not the repo root.)
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+
+def _ensure_repo_defaults(*, interactive: bool = True) -> bool:
+    """Check for missing default files and offer to symlink or copy them.
+
+    Returns True if all required files exist (or were successfully created),
+    False if a required file is still missing after the prompt.
+    """
+    import shutil
+
+    # Find a fixture dir that has the files we need
+    fixture_dir: Optional[Path] = None
+    for candidate in _FIXTURE_CANDIDATES:
+        if candidate.is_dir():
+            fixture_dir = candidate
+            break
+
+    # Build a mapping of {target: [possible sources]}
+    needs: list[tuple[Path, str, list[Path]]] = []
+
+    # default.json  <-  fixture/workflow.json or examples fallback
+    if not DEFAULT_WORKFLOW.exists():
+        sources: list[Path] = []
+        if fixture_dir:
+            p = fixture_dir / "workflow.json"
+            if p.is_file():
+                sources.append(p)
+        wf_examples = REPO_ROOT / "examples" / "workflows" / "workflow.json"
+        if wf_examples.is_file():
+            sources.append(wf_examples)
+        if _BUNDLED_WORKFLOW.is_file():
+            sources.append(_BUNDLED_WORKFLOW)
+        needs.append((DEFAULT_WORKFLOW, "workflow", sources))
+
+    # node_info.json  <-  fixture/node-info.json
+    if not DEFAULT_NODE_INFO.exists():
+        sources = []
+        if fixture_dir:
+            for name in ("node-info.json", "node_info.json", "object_info.json"):
+                p = fixture_dir / name
+                if p.is_file():
+                    sources.append(p)
+        needs.append((DEFAULT_NODE_INFO, "node_info", sources))
+
+    # comfyui-image.png  <-  fixture/ground-truth/*.png
+    if not DEFAULT_IMAGE.exists():
+        sources = []
+        if fixture_dir:
+            gt_dir = fixture_dir / "ground-truth"
+            if gt_dir.is_dir():
+                for p in sorted(gt_dir.glob("*.png")):
+                    sources.append(p)
+                    break  # take first
+        needs.append((DEFAULT_IMAGE, "image", sources))
+
+    if not needs:
+        return True  # everything already exists
+
+    print("\n" + "=" * 70)
+    print("  docs-test setup: some default files are missing from the repo root")
+    print("=" * 70)
+    if fixture_dir:
+        print(f"  Fixture source: {fixture_dir}")
+    print()
+
+    all_ok = True
+    for target, kind, sources in needs:
+        rel_target = target.relative_to(REPO_ROOT)
+        if not sources:
+            print(f"  ✗ {rel_target} — no source found")
+            if kind == "image":
+                print(f"    (optional — PNG-based doc examples will be skipped)")
+            else:
+                all_ok = False
+            continue
+
+        src = sources[0]
+        rel_src = src.relative_to(REPO_ROOT) if str(src).startswith(str(REPO_ROOT)) else src
+
+        if not interactive or not sys.stdin.isatty():
+            # Non-interactive: auto-copy
+            shutil.copy2(str(src), str(target))
+            print(f"  ✓ {rel_target} — copied from {rel_src}")
+            continue
+
+        print(f"  Missing: {rel_target}")
+        print(f"  Source:  {rel_src}")
+        choice = input("  Action — [s]ymlink / [c]opy / [S]kip? ").strip().lower()
+        if choice == "s":
+            target.symlink_to(src)
+            print(f"    → symlinked")
+        elif choice == "c":
+            shutil.copy2(str(src), str(target))
+            print(f"    → copied")
+        else:
+            print(f"    → skipped")
+            if kind != "image":
+                all_ok = False
+
+    print()
+    return all_ok
 
 
 # -----------------------------------------------------------------------------
@@ -253,7 +363,32 @@ def _looks_pseudo_or_frameworky_python(text: str) -> bool:
     if "FastAPI" in t or "HTTPException" in t or "JSONResponse" in t:
         # Usually shown as wiring example; may be incomplete in docs.
         return True
+    # Doc snippets that use autoflow.xxx() without importing the module
+    # (illustrative API patterns, not self-contained snippets).
+    if re.search(r"\bautoflow\.\w+\(", t):
+        return True
     return False
+
+
+def _looks_needs_comfyui_runtime(text: str) -> bool:
+    """Return True if snippet requires in-process ComfyUI modules."""
+    needles = [
+        ".execute(",
+        "from_comfyui_modules",
+        "import comfy",
+    ]
+    return any(n in text for n in needles)
+
+
+def _looks_needs_optional_deps(text: str) -> bool:
+    """Return True if snippet requires optional dependencies like Pillow."""
+    needles = [
+        "to_pixels(",
+        "to_pil(",
+        "from PIL",
+        "import PIL",
+    ]
+    return any(n in text for n in needles)
 
 
 def _looks_data_specific_python(text: str) -> bool:
@@ -266,6 +401,9 @@ def _looks_data_specific_python(text: str) -> bool:
         return True
     # Illustrative GUI rename in docs; sample workflows may not contain it.
     if "NewSubgraphName" in text:
+        return True
+    # Dict key access that depends on specific workflow structure.
+    if "['meta']" in text or '["meta"]' in text:
         return True
     return False
 
@@ -600,6 +738,7 @@ def _run_python_block(
     sandbox_dir: Path,
     env_patch: Optional[Dict[str, Optional[str]]] = None,
     strict_network: bool = False,
+    shared_ns: Optional[Dict[str, Any]] = None,
 ) -> None:
     compile(code, filename=label, mode="exec")
 
@@ -619,11 +758,27 @@ def _run_python_block(
         print("[python] compile: ok (exec skipped: data-specific example)")
         return
 
-    # Execute in a minimal namespace.
+    if _looks_needs_comfyui_runtime(code):
+        print("[python] compile: ok (exec skipped: needs ComfyUI runtime)")
+        return
+
+    if _looks_needs_optional_deps(code):
+        # Check if Pillow is actually available
+        try:
+            import PIL  # noqa: F401
+        except ImportError:
+            print("[python] compile: ok (exec skipped: needs Pillow)")
+            return
+
+    # Execute in a namespace.  When shared_ns is provided (per-page chaining),
+    # reuse that namespace so variables carry over between blocks.
     old_cwd = Path.cwd()
     try:
         os.chdir(str(sandbox_dir))
-        ns: Dict[str, Any] = {"__name__": "__docs_test__", "__file__": str(sandbox_dir / "_snippet_.py")}
+        if shared_ns is not None:
+            ns = shared_ns
+        else:
+            ns = {"__name__": "__docs_test__", "__file__": str(sandbox_dir / "_snippet_.py")}
         try:
             with _env_overlay(env_patch or {}):
                 exec(code, ns, ns)
@@ -959,6 +1114,7 @@ def _register_doc_blocks(
                     image: Optional[Path] = DEFAULT_IMAGE,
                     out: Optional[Path] = None,
                     verbose: bool = False,
+                    shared_ns: Optional[Dict[str, Any]] = None,
                 ) -> None:
                     # Prompt for server URL if we're about to run network-y blocks.
                     server_url2 = server_url
@@ -1018,6 +1174,7 @@ def _register_doc_blocks(
                                 sandbox_dir=sandbox,
                                 env_patch=env_patch,
                                 strict_network=strict_network,
+                                shared_ns=shared_ns,
                             )
                         elif _lang == "json":
                             _run_json_block(_code)
@@ -1083,6 +1240,9 @@ def _split_csv(s: Optional[str]) -> List[str]:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    # Check for missing default files and offer to set them up
+    _ensure_repo_defaults(interactive=(sys.stdin.isatty() and "--non-interactive" not in (argv or sys.argv)))
+
     _register_doc_blocks(docs_dir=DOCS_DIR, include_langs=["python", "bash", "json", "text", ""])
 
     p = argparse.ArgumentParser(

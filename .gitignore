@@ -25,6 +25,11 @@ MANIFEST
 examples/code/_docs_test_out/
 autoflow-test-suite/
 
+# docs-test defaults (user-created symlinks/copies)
+/default.json
+/node_info.json
+/comfyui-image.png
+
 
 RELEASE.md
 # AI agents if used
