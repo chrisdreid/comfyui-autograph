@@ -29,7 +29,7 @@ Use `Flow` when you want to locate nodes by subgraph title/type and update value
 ```python
 from autoflow import Flow
 
-flow = Flow.load("examples/workflows/workflow.json")
+flow = Flow.load("workflow.json")
 
 # Find a renamed subgraph instance by GUI title (deep=True by default)
 sg = flow.nodes.find(title="NewSubgraphName")[0]
@@ -48,14 +48,14 @@ In an `ApiFlow`, subgraphs are already flattened. You can edit by node type, by 
 from autoflow import ApiFlow
 
 # Convert workspace → API payload (ApiFlow auto-detects workspace format)
-api = ApiFlow("examples/workflows/workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json", node_info="node_info.json")
 
 # Find and edit nodes by class_type
 api.find(class_type="KSampler")[0].seed = 123
 
 # If the API payload came from a subgraph export, node IDs may include the subgraph chain:
 # e.g. "18:17:3" (outer subgraph node 18, inner 17, node 3)
-api2 = ApiFlow.load("examples/workflows/workflow-api.json")
+api2 = ApiFlow.load("workflow-api.json")
 api2["18:17:3/seed"] = 123
 ```
 
@@ -77,7 +77,7 @@ import os
 from autoflow import ApiFlow
 
 os.environ["AUTOFLOW_COMFYUI_SERVER_URL"] = "http://localhost:8188"
-api = ApiFlow("examples/workflows/workflow.json")
+api = ApiFlow("workflow.json")
 api.save("workflow-api.json")
 ```
 
@@ -100,7 +100,7 @@ Related:
 # api
 from autoflow import ApiFlow
 
-api = ApiFlow("examples/workflows/workflow.json", node_info="modules")
+api = ApiFlow("workflow.json", node_info="modules")
 api.save("workflow-api.json")
 ```
 
@@ -121,7 +121,7 @@ flowchart LR
 # api
 from autoflow import ApiFlow
 
-api = ApiFlow("examples/workflows/workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json", node_info="node_info.json")
 api.save("workflow-api.json")
 ```
 
@@ -144,7 +144,7 @@ flowchart LR
 # api
 from autoflow import Flow
 
-flow = Flow.load("examples/workflows/workflow.json")      # strict workspace loader
+flow = Flow.load("workflow.json")      # strict workspace loader
 # ... edit flow dict ...
 api = flow.convert(node_info="node_info.json")
 ```

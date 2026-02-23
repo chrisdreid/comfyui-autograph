@@ -49,7 +49,7 @@ All `.load()` methods accept multiple input types:
 # api
 from autoflow import Flow
 
-flow = Flow.load("examples/workflows/workflow.json")
+flow = Flow.load("workflow.json")
 api = flow.convert(node_info="node_info.json")
 api.save("workflow-api.json")
 ```
@@ -62,7 +62,7 @@ api.save("workflow-api.json")
 # api
 from autoflow import ApiFlow
 
-api = ApiFlow.load("examples/workflows/workflow-api.json")
+api = ApiFlow.load("workflow-api.json")
 ```
 
 ## `ApiFlow` with auto-detect
@@ -74,10 +74,10 @@ api = ApiFlow.load("examples/workflows/workflow-api.json")
 from autoflow import ApiFlow
 
 # Workspace file → auto-converts to API payload
-api = ApiFlow("examples/workflows/workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json", node_info="node_info.json")
 
 # API payload → loads directly
-api2 = ApiFlow("examples/workflows/workflow-api.json")
+api2 = ApiFlow("workflow-api.json")
 ```
 
 > [!NOTE]
@@ -109,7 +109,7 @@ Access and modify nodes using clean attribute and path syntax:
 # api
 from autoflow import ApiFlow
 
-api = ApiFlow.load("examples/workflows/workflow-api.json")
+api = ApiFlow.load("workflow-api.json")
 
 # By class_type (case-insensitive)
 api.ksampler[0].seed = 42           # first KSampler
@@ -144,7 +144,7 @@ For `Flow` (workspace format), access nodes via `.nodes` to avoid conflicts with
 ```python
 # api
 from autoflow import Flow
-flow = Flow.load("examples/workflows/workflow.json")
+flow = Flow.load("workflow.json")
 
 # Access nodes via .nodes
 flow.nodes.ksampler[0].type        # "KSampler"
@@ -173,8 +173,8 @@ All proxy objects support conversion back to plain dicts/lists:
 ```python
 from autoflow import Flow, ApiFlow
 
-api = ApiFlow.load("examples/workflows/workflow-api.json")
-flow = Flow.load("examples/workflows/workflow.json")
+api = ApiFlow.load("workflow-api.json")
+flow = Flow.load("workflow.json")
 
 # Single node → dict
 dict(api.ksampler[0])              # or .to_dict()

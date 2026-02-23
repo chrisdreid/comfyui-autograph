@@ -34,7 +34,7 @@ def random_seed(ctx):
         return rng.randrange(0, 2**31)
     return None
 
-api = ApiFlow("examples/workflows/workflow.json", node_info="node_info.json", convert_callbacks=random_seed)
+api = ApiFlow("workflow.json", node_info="node_info.json", convert_callbacks=random_seed)
 ```
 
 ## Metadata-driven targeting (workflow['extra'])
@@ -84,7 +84,7 @@ def seed_from_meta(ctx):
         return rng.randrange(0, 2**31)
     return None
 
-api = ApiFlow("examples/workflows/workflow.json", node_info="node_info.json", convert_callbacks=seed_from_meta)
+api = ApiFlow("workflow.json", node_info="node_info.json", convert_callbacks=seed_from_meta)
 ```
 
 ## Per-node patch injection (extra.autoflow.meta.nodes + extra.meta.nodes)
@@ -126,7 +126,7 @@ If both are present for the same node id, they are applied in this order:
 ```python
 from autoflow import Flow
 
-api = Flow.load("examples/workflows/workflow.json").convert(
+api = Flow.load("workflow.json").convert(
     node_info="node_info.json",
     # disable_autoflow_meta=True,
 )
@@ -176,7 +176,7 @@ def win_to_linux(ctx):
         s = "/mnt/z/" + s[3:]
     return s if s != v else None
 
-api = ApiFlow("examples/workflows/workflow.json", node_info="node_info.json")
+api = ApiFlow("workflow.json", node_info="node_info.json")
 api = api_mapping(api, win_to_linux)
 ```
 
