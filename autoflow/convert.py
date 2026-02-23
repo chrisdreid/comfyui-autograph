@@ -618,6 +618,71 @@ def _as_jsonable(value: Any) -> Any:
     return value
 
 
+_EXTRA_NODES_INIT_DONE = False
+
+# Approximate count of core nodes defined in ComfyUI's nodes.py.
+# If NODE_CLASS_MAPPINGS has fewer than this many entries, extra nodes
+# (comfy_extras/, comfy_api_nodes/, custom_nodes/) likely haven't been loaded.
+_CORE_NODES_THRESHOLD = 100
+
+
+def _ensure_extra_nodes_loaded() -> None:
+    """Lazily call ComfyUI's ``init_extra_nodes()`` if it hasn't run yet.
+
+    ComfyUI's server calls ``init_extra_nodes()`` at startup which populates
+    ``NODE_CLASS_MAPPINGS`` with nodes from ``comfy_extras/``,
+    ``comfy_api_nodes/``, and ``custom_nodes/``.  When autoflow runs outside
+    the server (standalone script / library usage), only the ~64 core nodes
+    are present.  This helper detects that situation and performs the init.
+    """
+    global _EXTRA_NODES_INIT_DONE
+    if _EXTRA_NODES_INIT_DONE:
+        return
+
+    try:
+        from nodes import NODE_CLASS_MAPPINGS, init_extra_nodes  # type: ignore
+    except ImportError:
+        _EXTRA_NODES_INIT_DONE = True
+        return
+
+    # If the server already loaded extras, skip.
+    if len(NODE_CLASS_MAPPINGS) >= _CORE_NODES_THRESHOLD:
+        _EXTRA_NODES_INIT_DONE = True
+        return
+
+    import asyncio
+    import logging
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        # We're inside an active event loop (e.g. Jupyter, server context).
+        # Cannot use asyncio.run(); warn and skip.
+        logging.warning(
+            "autoflow: cannot load ComfyUI extra nodes from within a running "
+            "event loop. NODE_CLASS_MAPPINGS may be incomplete (%d entries). "
+            "Consider calling init_extra_nodes() before using NodeInfo('modules').",
+            len(NODE_CLASS_MAPPINGS),
+        )
+        _EXTRA_NODES_INIT_DONE = True
+        return
+
+    logging.info(
+        "autoflow: NODE_CLASS_MAPPINGS has only %d entries; "
+        "loading extra/custom nodes via init_extra_nodes()...",
+        len(NODE_CLASS_MAPPINGS),
+    )
+    try:
+        asyncio.run(init_extra_nodes())
+    except Exception as exc:
+        logging.warning("autoflow: init_extra_nodes() failed: %s", exc)
+    finally:
+        _EXTRA_NODES_INIT_DONE = True
+
+
 def node_info_from_comfyui_modules() -> Dict[str, Any]:
     try:
         import comfy.samplers  # noqa: F401
@@ -629,6 +694,8 @@ def node_info_from_comfyui_modules() -> Dict[str, Any]:
             "or use --server-url to fetch node information via API, "
             "or use --node-info-path to load from a saved file."
         ) from e
+
+    _ensure_extra_nodes_loaded()
 
     out: Dict[str, Any] = {}
     for class_type, cls in NODE_CLASS_MAPPINGS.items():
@@ -946,6 +1013,8 @@ def get_widget_input_names(class_type: str, node_info: Optional[Dict[str, Any]] 
             "or use --server-url to fetch node information via API, "
             "or use --node-info-path to load from a saved file."
         ) from e
+
+    _ensure_extra_nodes_loaded()
 
     if class_type not in NODE_CLASS_MAPPINGS:
         raise NodeInfoError(f"Node class '{class_type}' not found in NODE_CLASS_MAPPINGS")
