@@ -154,6 +154,7 @@ Both `Flow.find(...)` / `flow.nodes.find(...)` and `ApiFlow.find(...)` support d
 Examples:
 
 ```python
+# continued
 import re
 from autoflow import Flow
 

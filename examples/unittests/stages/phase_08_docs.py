@@ -188,17 +188,15 @@ def run(collector: ResultCollector, **kwargs) -> None:
         ex = docs_mod.EXAMPLES[label]
         by_doc.setdefault(ex.doc_file, []).append((label, ex))
 
-    # One shared namespace per doc page.
-    # For python blocks we pass shared_ns so variables carry over.
-    # We create the sandbox once per page too (via the first call's fn,
-    # which creates a temp dir internally).
+    # Directive-based chaining:
+    # - Blocks with `# continued` at the top share the previous block's namespace
+    # - All other blocks get a fresh namespace
+    # This is explicit, matching what readers see in the docs.
     idx = 0
     for doc_file, examples in by_doc.items():
-        # Create a per-page shared namespace
-        page_ns: Dict[str, Any] = {
-            "__name__": "__docs_test__",
-            "__file__": f"<{doc_file}>",
-        }
+        # Track the "current" namespace for this page.
+        # Reset to None at the start of each page.
+        prev_ns: Optional[Dict[str, Any]] = None
 
         for label, ex in examples:
             idx += 1
@@ -208,12 +206,22 @@ def run(collector: ResultCollector, **kwargs) -> None:
             if ex.needs_network:
                 per_block_timeout = 30
 
-            def make_test_fn(ex=ex, label=label, timeout=per_block_timeout, page_ns=page_ns):
+            # Decide namespace: if block says "# continued" and we have a
+            # previous namespace, reuse it.  Otherwise start fresh.
+            if ex.continued and prev_ns is not None:
+                block_ns = prev_ns
+            else:
+                block_ns = {
+                    "__name__": "__docs_test__",
+                    "__file__": f"<{doc_file}>",
+                }
+
+            def make_test_fn(ex=ex, label=label, timeout=per_block_timeout, ns=block_ns):
                 def test_fn():
-                    # Inject shared_ns into kwargs for python blocks
+                    # Inject shared_ns into kwargs for continued python blocks
                     call_kwargs = dict(shared_kwargs)
                     if ex.lang == "python":
-                        call_kwargs["shared_ns"] = page_ns
+                        call_kwargs["shared_ns"] = ns
 
                     result, error, timed_out = _run_with_timeout(
                         lambda: docs_mod._call_with_supported_kwargs(ex.fn, call_kwargs),
@@ -236,7 +244,13 @@ def run(collector: ResultCollector, **kwargs) -> None:
             desc = label
             if ex.needs_network:
                 desc += " [net]"
+            if ex.continued:
+                desc += " [continued]"
 
             _run_test(collector, stage, test_id, desc, make_test_fn())
+
+            # Remember this block's namespace so the next `# continued`
+            # block on this page can pick it up.
+            prev_ns = block_ns
 
     _print_stage_summary(collector, stage)

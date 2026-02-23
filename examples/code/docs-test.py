@@ -131,6 +131,7 @@ class Example:
     needs_network: bool
     can_exec_python: bool
     can_run_cli: bool
+    continued: bool  # True when block starts with "# continued"
 
 
 EXAMPLES: Dict[str, Example] = {}
@@ -1095,6 +1096,7 @@ def _register_doc_blocks(
             needs_network = _looks_networky(code)
             can_exec_python = (lang2 == "python")
             can_run_cli = (lang2 == "bash")
+            continued = code.lstrip().startswith("# continued")
 
             def _make_fn(_code: str, _label: str, _lang: str) -> ExampleFn:
                 def _fn(
@@ -1211,6 +1213,7 @@ def _register_doc_blocks(
                 needs_network=needs_network,
                 can_exec_python=can_exec_python,
                 can_run_cli=can_run_cli,
+                continued=continued,
             )
 
     # Add a hand-written E2E test (not derived from docs fences).
@@ -1226,6 +1229,7 @@ def _register_doc_blocks(
             needs_network=True,
             can_exec_python=True,
             can_run_cli=False,
+            continued=False,
         )
 
 
