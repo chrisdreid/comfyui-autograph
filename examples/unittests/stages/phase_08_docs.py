@@ -3,16 +3,16 @@
 Instead of launching docs-test.py as a single subprocess (which provides no
 progress feedback and can hang silently), this phase imports the docs-test
 registry directly and runs each example block as its own individual test.
-This gives:
-  - per-block progress in the terminal and HTML dashboard
-  - per-block timing
-  - immediate identification of which block hangs or fails
+
+Blocks from the same .md doc page share a Python namespace so that variables
+defined in block N carry over to block N+1 (matching how users read docs).
 
 Enabled via --docs flag.
 """
 
 from __future__ import annotations
 
+import collections
 import importlib.util
 import os
 import sys
@@ -62,7 +62,7 @@ def _run_with_timeout(fn, timeout_s=30):
     t.join(timeout=timeout_s)
 
     if t.is_alive():
-        return None, None, True  # timed out
+        return None, None, True
     return result_box[0], error_box[0], False
 
 
@@ -156,20 +156,17 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     out_dir = Path(kwargs.get("output_dir", _REPO_ROOT / "autoflow-test-suite" / "outputs")) / "_docs_sandbox"
 
-    # Setup report
-    wf_str = str(workflow_path.relative_to(_REPO_ROOT)) if workflow_path and str(workflow_path).startswith(str(_REPO_ROOT)) else str(workflow_path)
-    ni_str = str(node_info_path.relative_to(_REPO_ROOT)) if node_info_path and str(node_info_path).startswith(str(_REPO_ROOT)) else str(node_info_path)
-    img_str = str(image_path.relative_to(_REPO_ROOT)) if image_path and str(image_path).startswith(str(_REPO_ROOT)) else str(image_path)
-
     def t_8_0():
         return {
             "input": f"{len(docs_mod.EXAMPLES)} doc blocks registered",
-            "output": f"workflow={wf_str}, node_info={ni_str}, image={img_str}",
+            "output": f"workflow={workflow_path}, node_info={node_info_path}",
             "result": "✓ ready",
         }
     _run_test(collector, stage, "8.0", "Docs setup", t_8_0)
 
-    # --- Build shared kwargs for each block ---
+    # --- Group examples by doc file for namespace chaining ---
+    # Blocks from the same .md file share a namespace so that
+    # variables defined in block N are available in block N+1.
     server_url = kwargs.get("server_url")
     shared_kwargs: Dict[str, Any] = dict(
         exec_python=True,
@@ -185,41 +182,61 @@ def run(collector: ResultCollector, **kwargs) -> None:
         verbose=False,
     )
 
-    # --- Run each doc block as its own test ---
-    sorted_labels = sorted(docs_mod.EXAMPLES.keys())
-    for idx, label in enumerate(sorted_labels, start=1):
+    # Group by doc_file, preserving sort order
+    by_doc: Dict[str, List[Tuple[str, Any]]] = collections.OrderedDict()
+    for label in sorted(docs_mod.EXAMPLES.keys()):
         ex = docs_mod.EXAMPLES[label]
-        test_id = f"8.{idx}"
+        by_doc.setdefault(ex.doc_file, []).append((label, ex))
 
-        # Per-block timeout
-        per_block_timeout = 15
-        if ex.needs_network:
-            per_block_timeout = 30
+    # One shared namespace per doc page.
+    # For python blocks we pass shared_ns so variables carry over.
+    # We create the sandbox once per page too (via the first call's fn,
+    # which creates a temp dir internally).
+    idx = 0
+    for doc_file, examples in by_doc.items():
+        # Create a per-page shared namespace
+        page_ns: Dict[str, Any] = {
+            "__name__": "__docs_test__",
+            "__file__": f"<{doc_file}>",
+        }
 
-        def make_test_fn(ex=ex, label=label, timeout=per_block_timeout):
-            def test_fn():
-                result, error, timed_out = _run_with_timeout(
-                    lambda: docs_mod._call_with_supported_kwargs(ex.fn, shared_kwargs),
-                    timeout_s=timeout,
-                )
+        for label, ex in examples:
+            idx += 1
+            test_id = f"8.{idx}"
 
-                if timed_out:
-                    raise AssertionError(f"Timed out after {timeout}s")
-                if error:
-                    raise error
+            per_block_timeout = 15
+            if ex.needs_network:
+                per_block_timeout = 30
 
-                status = "exec" if ex.can_exec_python else "compile"
-                return {
-                    "input": f"{ex.doc_file}#{ex.block_index}:{ex.lang}",
-                    "output": status,
-                    "result": f"✓ {ex.lang} ok",
-                }
-            return test_fn
+            def make_test_fn(ex=ex, label=label, timeout=per_block_timeout, page_ns=page_ns):
+                def test_fn():
+                    # Inject shared_ns into kwargs for python blocks
+                    call_kwargs = dict(shared_kwargs)
+                    if ex.lang == "python":
+                        call_kwargs["shared_ns"] = page_ns
 
-        desc = label
-        if ex.needs_network:
-            desc += " [net]"
+                    result, error, timed_out = _run_with_timeout(
+                        lambda: docs_mod._call_with_supported_kwargs(ex.fn, call_kwargs),
+                        timeout_s=timeout,
+                    )
 
-        _run_test(collector, stage, test_id, desc, make_test_fn())
+                    if timed_out:
+                        raise AssertionError(f"Timed out after {timeout}s")
+                    if error:
+                        raise error
+
+                    status = "exec" if ex.can_exec_python else "compile"
+                    return {
+                        "input": f"{ex.doc_file}#{ex.block_index}:{ex.lang}",
+                        "output": status,
+                        "result": f"✓ {ex.lang} ok",
+                    }
+                return test_fn
+
+            desc = label
+            if ex.needs_network:
+                desc += " [net]"
+
+            _run_test(collector, stage, test_id, desc, make_test_fn())
 
     _print_stage_summary(collector, stage)

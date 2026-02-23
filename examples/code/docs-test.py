@@ -363,7 +363,32 @@ def _looks_pseudo_or_frameworky_python(text: str) -> bool:
     if "FastAPI" in t or "HTTPException" in t or "JSONResponse" in t:
         # Usually shown as wiring example; may be incomplete in docs.
         return True
+    # Doc snippets that use autoflow.xxx() without importing the module
+    # (illustrative API patterns, not self-contained snippets).
+    if re.search(r"\bautoflow\.\w+\(", t):
+        return True
     return False
+
+
+def _looks_needs_comfyui_runtime(text: str) -> bool:
+    """Return True if snippet requires in-process ComfyUI modules."""
+    needles = [
+        ".execute(",
+        "from_comfyui_modules",
+        "import comfy",
+    ]
+    return any(n in text for n in needles)
+
+
+def _looks_needs_optional_deps(text: str) -> bool:
+    """Return True if snippet requires optional dependencies like Pillow."""
+    needles = [
+        "to_pixels(",
+        "to_pil(",
+        "from PIL",
+        "import PIL",
+    ]
+    return any(n in text for n in needles)
 
 
 def _looks_data_specific_python(text: str) -> bool:
@@ -376,6 +401,9 @@ def _looks_data_specific_python(text: str) -> bool:
         return True
     # Illustrative GUI rename in docs; sample workflows may not contain it.
     if "NewSubgraphName" in text:
+        return True
+    # Dict key access that depends on specific workflow structure.
+    if "['meta']" in text or '["meta"]' in text:
         return True
     return False
 
@@ -710,6 +738,7 @@ def _run_python_block(
     sandbox_dir: Path,
     env_patch: Optional[Dict[str, Optional[str]]] = None,
     strict_network: bool = False,
+    shared_ns: Optional[Dict[str, Any]] = None,
 ) -> None:
     compile(code, filename=label, mode="exec")
 
@@ -729,11 +758,27 @@ def _run_python_block(
         print("[python] compile: ok (exec skipped: data-specific example)")
         return
 
-    # Execute in a minimal namespace.
+    if _looks_needs_comfyui_runtime(code):
+        print("[python] compile: ok (exec skipped: needs ComfyUI runtime)")
+        return
+
+    if _looks_needs_optional_deps(code):
+        # Check if Pillow is actually available
+        try:
+            import PIL  # noqa: F401
+        except ImportError:
+            print("[python] compile: ok (exec skipped: needs Pillow)")
+            return
+
+    # Execute in a namespace.  When shared_ns is provided (per-page chaining),
+    # reuse that namespace so variables carry over between blocks.
     old_cwd = Path.cwd()
     try:
         os.chdir(str(sandbox_dir))
-        ns: Dict[str, Any] = {"__name__": "__docs_test__", "__file__": str(sandbox_dir / "_snippet_.py")}
+        if shared_ns is not None:
+            ns = shared_ns
+        else:
+            ns = {"__name__": "__docs_test__", "__file__": str(sandbox_dir / "_snippet_.py")}
         try:
             with _env_overlay(env_patch or {}):
                 exec(code, ns, ns)
@@ -1069,6 +1114,7 @@ def _register_doc_blocks(
                     image: Optional[Path] = DEFAULT_IMAGE,
                     out: Optional[Path] = None,
                     verbose: bool = False,
+                    shared_ns: Optional[Dict[str, Any]] = None,
                 ) -> None:
                     # Prompt for server URL if we're about to run network-y blocks.
                     server_url2 = server_url
@@ -1128,6 +1174,7 @@ def _register_doc_blocks(
                                 sandbox_dir=sandbox,
                                 env_patch=env_patch,
                                 strict_network=strict_network,
+                                shared_ns=shared_ns,
                             )
                         elif _lang == "json":
                             _run_json_block(_code)
