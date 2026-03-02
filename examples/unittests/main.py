@@ -7,11 +7,7 @@ Slim orchestrator that auto-discovers test modules and runs them in order.
 Every module exports ``run(collector, **kwargs)`` and uses the shared
 ``harness`` infrastructure.
 
-Modes:
-  - **Phases** (``--phases``, default): discovers ``stages/phase_*.py``
-    — 8 sequential phases following the data pipeline.
-  - **Legacy stages** (``--stage N``): discovers ``stages/stage_*.py``
-    — the original 27-stage layout.
+Phases (``phase_*.py``): 8 sequential phases following the data pipeline.
 
 Usage::
 
@@ -29,9 +25,6 @@ Usage::
 
     # Run a specific phase
     python examples/unittests/main.py --phase 3
-
-    # Legacy: run a specific old stage
-    python examples/unittests/main.py --legacy --stage 16
 
     # List all discovered modules
     python examples/unittests/main.py --list
@@ -77,27 +70,10 @@ from harness import (  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Stage / phase discovery
+# Phase discovery
 # ---------------------------------------------------------------------------
 _STAGES_DIR = _UNITTEST_DIR / "stages"
 
-
-def _discover_stages() -> List[Tuple[int, str, Any]]:
-    """Return sorted list of (stage_num, module_name, module) for every stage_*.py."""
-    stages: List[Tuple[int, str, Any]] = []
-    for path in sorted(_STAGES_DIR.glob("stage_*.py")):
-        stem = path.stem  # e.g. stage_08_flow_core
-        parts = stem.split("_", 2)  # ["stage", "08", "flow_core"]
-        if len(parts) < 2:
-            continue
-        try:
-            num = int(parts[1])
-        except ValueError:
-            continue
-        mod_name = f"stages.{stem}"
-        mod = importlib.import_module(mod_name)
-        stages.append((num, mod_name, mod))
-    return stages
 
 
 def _discover_phases() -> List[Tuple[int, str, Any]]:
@@ -162,7 +138,7 @@ def _check_binary(name: str, override: Optional[str] = None) -> Optional[str]:
 
 def detect_environment(args) -> Dict[str, Any]:
     """Probe for all optional environments and return a summary dict."""
-    server_url = args.server_url
+    server_url = args.server_url or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
 
     # Interactive prompts
     fixtures_dir = args.fixtures_dir
@@ -271,12 +247,8 @@ def main() -> int:
                         help="Don't wipe output directory before running")
     parser.add_argument("--no-browser", action="store_true",
                         help="Don't open report in browser")
-    parser.add_argument("--stage", type=int, nargs="*", default=None,
-                        help="(Legacy) Run only specific stage number(s)")
     parser.add_argument("--phase", type=int, nargs="*", default=None,
                         help="Run only specific phase number(s)")
-    parser.add_argument("--legacy", action="store_true",
-                        help="Use legacy stage_*.py files instead of phase_*.py")
     parser.add_argument("--node-info", type=str, default=None,
                         help="Path to node-info.json (overrides all other sources)")
     parser.add_argument("--docs", action="store_true",
@@ -289,15 +261,8 @@ def main() -> int:
                         help="List all discovered modules and exit")
     args = parser.parse_args()
 
-    # --- Determine mode: phases (default) vs legacy stages ---
-    use_legacy = args.legacy or (args.stage is not None)
-
-    if use_legacy:
-        all_modules = _discover_stages()
-        mode_label = "Stage"
-    else:
-        all_modules = _discover_phases()
-        mode_label = "Phase"
+    all_modules = _discover_phases()
+    mode_label = "Phase"
 
     if args.list:
         print(f"\n{'='*60}")
@@ -345,7 +310,7 @@ def main() -> int:
         print(f"  📄 Node-info override: {ni_path}")
 
     # --- Filter modules ---
-    filter_nums = args.stage if use_legacy else args.phase
+    filter_nums = args.phase
     if filter_nums is not None:
         num_set = set(filter_nums)
         run_modules = [(n, m, mod) for n, m, mod in all_modules if n in num_set]
