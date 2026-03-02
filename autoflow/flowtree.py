@@ -546,11 +546,17 @@ class NodeInfo(_MappingWrapper):
                 inp,
                 server_url,
                 timeout,
-                allow_env=False,
+                allow_env=bool(allow_env),
                 require_source=True,
             )
             if oi_dict is None:  # pragma: no cover (resolver should raise when require_source=True)
-                raise WorkflowConverterError("Missing node_info source. Pass source= or set AUTOFLOW_NODE_INFO_SOURCE.")
+                raise WorkflowConverterError(
+                    "Could not resolve node_info. Options:\n"
+                    "  • NodeInfo('fetch', server_url='http://localhost:8188')\n"
+                    "  • NodeInfo('path/to/node_info.json')\n"
+                    "  • Set AUTOFLOW_COMFYUI_SERVER_URL env var and use NodeInfo('fetch')\n"
+                    "  • Set AUTOFLOW_NODE_INFO_SOURCE env var"
+                )
             oi = _legacy.NodeInfo(oi_dict)
             setattr(oi, "_autoflow_origin", origin)
             s = getattr(oi, "source", None)

@@ -29,6 +29,7 @@ autoflow-test-suite/
 /default.json
 /node_info.json
 /comfyui-image.png
+git-commit.md
 
 
 RELEASE.md

@@ -827,12 +827,14 @@ def node_info_from_comfyui_modules() -> Dict[str, Any]:
         import comfy.samplers  # noqa: F401
         import comfy.sd  # noqa: F401
         from nodes import NODE_CLASS_MAPPINGS  # type: ignore
-    except ImportError as e:
+    except ImportError:
         raise NodeInfoError(
-            "ComfyUI modules not found. Please run this script from the ComfyUI directory "
-            "or use --server-url to fetch node information via API, "
-            "or use --node-info-path to load from a saved file."
-        ) from e
+            "ComfyUI modules not available (could not import 'comfy'). To get node_info:\n"
+            "  • Set AUTOFLOW_COMFYUI_SERVER_URL and use NodeInfo('fetch')\n"
+            "  • Pass server_url=  e.g. NodeInfo('fetch', server_url='http://localhost:8188')\n"
+            "  • Pass a file path  e.g. NodeInfo('path/to/node_info.json')\n"
+            "  • Run from inside the ComfyUI directory (for direct module import)"
+        ) from None
 
     _ensure_extra_nodes_loaded()
 
@@ -983,8 +985,17 @@ def resolve_node_info_with_origin(
                             note="fetch->server",
                         ),
                     )
+                try:
+                    modules_oi = node_info_from_comfyui_modules()
+                except NodeInfoError:
+                    raise NodeInfoError(
+                        "node_info='fetch' could not find a server URL and ComfyUI modules "
+                        "are not available.\n"
+                        "  • Set AUTOFLOW_COMFYUI_SERVER_URL environment variable, or\n"
+                        "  • Pass server_url='http://localhost:8188'"
+                    ) from None
                 return (
-                    node_info_from_comfyui_modules(),
+                    modules_oi,
                     True,
                     NodeInfoOrigin(
                         requested=obj_s,
@@ -1146,12 +1157,14 @@ def get_widget_input_names(class_type: str, node_info: Optional[Dict[str, Any]] 
         import comfy.samplers  # noqa: F401
         import comfy.sd  # noqa: F401
         from nodes import NODE_CLASS_MAPPINGS  # type: ignore
-    except ImportError as e:
+    except ImportError:
         raise NodeInfoError(
-            "ComfyUI modules not found. Please run this script from the ComfyUI directory "
-            "or use --server-url to fetch node information via API, "
-            "or use --node-info-path to load from a saved file."
-        ) from e
+            "ComfyUI modules not available (could not import 'comfy'). To get node_info:\n"
+            "  • Set AUTOFLOW_COMFYUI_SERVER_URL and use NodeInfo('fetch')\n"
+            "  • Pass server_url=  e.g. NodeInfo('fetch', server_url='http://localhost:8188')\n"
+            "  • Pass a file path  e.g. NodeInfo('path/to/node_info.json')\n"
+            "  • Run from inside the ComfyUI directory (for direct module import)"
+        ) from None
 
     _ensure_extra_nodes_loaded()
 

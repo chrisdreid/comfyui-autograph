@@ -419,4 +419,51 @@ print(api.node_info.source)
         }
     _run_test(collector, stage, "2.27", "Flowtree NodeInfo passthrough keeps source", t_2_27)
 
+    # -----------------------------------------------------------------------
+    # 2.28  NodeInfo('fetch') + AUTOFLOW_COMFYUI_SERVER_URL env var
+    # -----------------------------------------------------------------------
+
+    def t_2_28():
+        ni_path = str(builtin_node_info_path())
+        code = f"""\
+import os, sys, json
+from unittest.mock import patch
+from pathlib import Path
+
+# Ensure autoflow.convert is the real module for patching
+import autoflow.convert as conv_mod
+
+# Load a real node_info dict for the mock to return
+ni_data = json.loads(Path("{ni_path}").read_text(encoding="utf-8"))
+
+def fake_fetch(server_url, timeout=0):
+    return ni_data
+
+os.environ["AUTOFLOW_COMFYUI_SERVER_URL"] = "http://test.invalid:8188"
+
+with patch.object(conv_mod, "fetch_node_info", fake_fetch), \
+     patch.object(conv_mod, "node_info_from_comfyui_modules", side_effect=RuntimeError("blocked")):
+    from autoflow import NodeInfo
+    oi = NodeInfo("fetch")
+    print(len(oi))
+    print("KSampler" in oi)
+    origin = getattr(oi._oi, "_autoflow_origin", None)
+    print(origin.resolved if origin else "no-origin")
+    print(origin.effective_server_url if origin else "no-url")
+"""
+        try:
+            out = _run_subprocess(code, {"AUTOFLOW_MODEL_LAYER": "flowtree"})
+        except (subprocess.CalledProcessError, RuntimeError) as e:
+            raise SkipTest(f"subprocess failed: {{e}}")
+        assert int(out[0].strip()) > 0, f"Expected >0 types, got {{out[0]!r}}"
+        assert out[1].strip() == "True", f"Expected KSampler present, got {{out[1]!r}}"
+        assert out[2].strip() == "server", f"Expected resolved='server', got {{out[2]!r}}"
+        assert "test.invalid" in out[3], f"Expected env URL in origin, got {{out[3]!r}}"
+        return {
+            "input": "NodeInfo('fetch') + AUTOFLOW_COMFYUI_SERVER_URL env var",
+            "output": f"{{len(out)}} checks passed, resolved=server",
+            "result": "✓ env var used for fetch",
+        }
+    _run_test(collector, stage, "2.28", "NodeInfo('fetch') uses AUTOFLOW_COMFYUI_SERVER_URL", t_2_28)
+
     _print_stage_summary(collector, stage)
