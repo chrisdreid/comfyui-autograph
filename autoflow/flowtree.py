@@ -590,7 +590,10 @@ class Flow(_MappingWrapper):
             raise ValueError(
                 "Flow has no node_info — pass node_info= to Flow.create() first."
             )
-        ni_dict = dict(ni) if not isinstance(ni, dict) else ni
+        # Deep-unwrap any DictView/ListView wrappers from NodeInfo to plain
+        # dicts/lists so isinstance checks work correctly.
+        import json as _json
+        ni_dict = _json.loads(_json.dumps(dict(ni)))
 
         if class_type not in ni_dict:
             raise ValueError(
