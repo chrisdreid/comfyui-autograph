@@ -7,7 +7,7 @@ ComfyUI
 ██╔══██║██║   ██║   ██║   ██║   ██║██╔══╝  ██║     ██║   ██║██║███╗██║
 ██║  ██║╚██████╔╝   ██║   ╚██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝
 ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝ 
-                                                       version: 1.4.1
+                                                       version: 1.4.2
 ```
 
 [![PyPI version](https://img.shields.io/pypi/v/comfyui-autoflow?color=blue)](https://pypi.org/project/comfyui-autoflow/)
@@ -42,22 +42,20 @@ Skip the GUI. `autoflow` handles the backend so you can automate/pipeline your C
 
 ## Features
 
-
 | Feature | Description |
 |---------|-------------|
-| **Submit Workflow.json** | Directly edit and submit `workflow.json` files without the need for GUI Api exports   |
-| **Convert** | `workflow.json` → `ApiFlow` (renderable API payload) |
-| **Offline/Online** | Convert without ComfyUI server running or fetch live from ComfyUI |
-| **Subgraphs** | Flattens `definitions.subgraphs` (including nested subgraphs) into a normal API payload |
-| **Edit** | Modify nodes, inputs, seeds before submission |
-| **Find + address** | `flow.nodes.find(...)` / `api.find(...)` plus `.path()` / `.address()` for stable node addresses |
-| **Submit** | Send to ComfyUI, wait for completion, fetch output images |
-| **Progress** | Hook into ComfyUI render events for real-time progress control |
-| **Serverless ComfyUI Execution** | `.execute` to process ComfyUI native nodes without running the ComfyUI HTTP server |
-| **Map** | Patch values across nodes for pipelines (seeds, paths, prompts) |
-| **Extract** | Load workflows from ComfyUI PNG outputs (embedded metadata) |
-| **Stdlib-only** | No dependencies by default; optional Pillow, ImageMagick, ffmpeg |
-| **Widget introspection** | `.choices()`, `.tooltip()`, `.spec()` on any node input — query valid options from `node_info` |
+| **Convert workflow.json** | `workflow.json` → renderable API payload, skip the GUI export entirely |
+| **Offline / Online** | Convert without a running ComfyUI server, or fetch live from one |
+| **Submit + Images** | Send to ComfyUI, wait for completion, fetch and save output images |
+| **Progress** | Hook into WebSocket render events for real-time progress control |
+| **Edit + Introspect** | `api.KSampler.seed = 42`, `.find(...)`, `.choices()`, `.tooltip()`. OOP access to every node and widget |
+| **Metadata** | Attach studio metadata to workflows that carries through the entire production lifecycle |
+| **Serverless Execute** | `.execute()` runs ComfyUI nodes in-process, no HTTP server required |
+| **Map** | Sweep seeds, prompts, paths across nodes for batch pipelines |
+| **Save + Load** | `.save()` / `.load()` on Flow, ApiFlow, and NodeInfo for simple serialization of any object |
+| **Extract** | Load workflows directly from ComfyUI PNG outputs (embedded metadata) |
+| **Stdlib-only** | Zero dependencies by default; optional Pillow, ImageMagick, ffmpeg |
+| **Subgraphs** | Flattens nested `definitions.subgraphs` into a normal API payload |
 
 ## Requirements
 
@@ -101,34 +99,35 @@ Then use with `python -m autoflow ...` or `import autoflow` from Python.
   - Windows PowerShell: `$env:AUTOFLOW_COMFYUI_SERVER_URL = "http://localhost:8188"`
   - Windows CMD: `set AUTOFLOW_COMFYUI_SERVER_URL=http://localhost:8188`
   - Python: `import os; os.environ["AUTOFLOW_COMFYUI_SERVER_URL"] = "http://localhost:8188"`
-- Optional: set `AUTOFLOW_NODE_INFO_SOURCE=modules|fetch|server|/path/to/node_info.json` to auto-resolve `node_info`.
+- Optional: set `AUTOFLOW_NODE_INFO_SOURCE=modules|fetch|server|/path/to/node-info.json` to auto-resolve `node_info`.
 ---
 # `autoflow` - Quick Start
 
-### Get `node_info.json` (optional, one-time)
+### Get `node-info.json` (optional, one-time)
 
-Save `node_info.json` so you can convert offline. You can also convert against a running ComfyUI instance, but for efficiency we recommend pulling a new node_info.json file per instance (reproducible, no server needed).
+Save `node-info.json` so you can convert offline. You can also convert against a running ComfyUI instance, but for efficiency we recommend pulling a new `node-info.json` per instance (reproducible, no server needed).
 
 ```mermaid
 flowchart LR
   comfy["ComfyUI server"] --> obj["/object_info"]
-  obj --> file["node_info.json"]
+  obj --> file["node-info.json"]
 ```
 
 ```python
-# api
+# api — set AUTOFLOW_COMFYUI_SERVER_URL first (see Installation above)
 from autoflow import NodeInfo
 
-NodeInfo.fetch(server_url="http://localhost:8188", output_path="node_info.json")
+node_info = NodeInfo('fetch')
+node_info.save('node-info.json')
 ```
 
 ```bash
 # cli
-python -m autoflow --download-node-info-path node_info.json --server-url http://localhost:8188
+python -m autoflow --download-node-info-path node-info.json
 ```
 
 - Direct modules (no server): `NodeInfo.from_comfyui_modules()` builds `node_info` from local ComfyUI nodes.
-- Env source (optional): set `AUTOFLOW_NODE_INFO_SOURCE=modules|fetch|server|/path/to/node_info.json`.
+- Env source (optional): set `AUTOFLOW_NODE_INFO_SOURCE=modules|fetch|server|/path/to/node-info.json`.
 
 - More: [`docs/node-info-and-env.md`](docs/node-info-and-env.md)
 ## Convert live (using running ComfyUI)
@@ -137,22 +136,28 @@ Convert `workflow.json` by fetching `/object_info` from your running ComfyUI ser
 
 ```mermaid
 flowchart LR
-  env["AUTOFLOW_COMFYUI_SERVER_URL"] --> wf["ApiFlow(...)"]
-  wf --> apiFlow["ApiFlow"]
+  env["AUTOFLOW_COMFYUI_SERVER_URL"] --> wf["Flow(...)"]
+  wf --> flow["Flow"]
   comfy["ComfyUI server"] --> obj["/object_info"]
   obj --> wf
 ```
 If environment variable `AUTOFLOW_COMFYUI_SERVER_URL` is set, `server_url` becomes optional.
 
-If `AUTOFLOW_NODE_INFO_SOURCE` is set, `ApiFlow(...)` will auto-resolve `node_info` when none is provided.
+If `AUTOFLOW_NODE_INFO_SOURCE` is set, `Flow(...)` / `ApiFlow(...)` will auto-resolve `node_info` when none is provided.
 
 ```python
-# api
-from autoflow import ApiFlow
+# api — use Flow to work with workflow.json natively
+from autoflow import Flow
 
-api = ApiFlow("workflow.json")  # uses AUTOFLOW_COMFYUI_SERVER_URL
+flow = Flow("workflow.json")   # uses AUTOFLOW_COMFYUI_SERVER_URL
+flow.save("workflow-out.json") # stays in workspace format
+
+# or convert to API payload
+api = flow.convert()
 api.save("workflow-api.json")
 ```
+
+> **Note:** `ApiFlow("workflow.json")` also works and always converts to the API format. `Flow` keeps the workspace format and converts on demand.
 
 ```bash
 # cli
@@ -164,31 +169,36 @@ python -m autoflow --input-path workflow.json --output-path workflow-api.json
 
 ## Convert `workflow` to `workflow-api` (offline)
 
-Convert using your saved `node_info.json` (no server needed).
+Convert using your saved `node-info.json` (no server needed).
 
 ```mermaid
 flowchart LR
-  workflowJson["workflow.json"] --> wf["ApiFlow(...)"]
-  objectInfo["node_info.json"] --> wf
-  wf --> apiFlow["ApiFlow"]
+  workflowJson["workflow.json"] --> wf["Flow(...)"]
+  objectInfo["node-info.json"] --> wf
+  wf --> flow["Flow"]
+  flow --> convert["flow.convert()"]
+  convert --> apiFlow["ApiFlow"]
   apiFlow --> saveApi["save(workflow-api.json)"]
 ```
 
 ```python
-# api
-from autoflow import ApiFlow
+# api — Flow-first: load, optionally edit, then convert
+from autoflow import Flow
 
-api = ApiFlow("workflow.json", node_info="node_info.json")
-api.save("workflow-api.json")
+flow = Flow("workflow.json", node_info="node-info.json")
+flow.save("workflow-out.json")       # save workspace format
+
+api = flow.convert()                  # convert to API payload
+api.save("workflow-api.json")         # save API format
 ```
 
 ```bash
 # cli
 # Offline mode (saved node_info)
-python -m autoflow --input-path workflow.json --output-path workflow-api.json --node-info-path node_info.json
+python -m autoflow --input-path workflow.json --output-path workflow-api.json --node-info-path node-info.json
 
 # Short form (flags)
-python -m autoflow -i workflow.json -o workflow-api.json -f node_info.json
+python -m autoflow -i workflow.json -o workflow-api.json -f node-info.json
 ```
 
 - More: [`docs/convert.md`](docs/convert.md)
@@ -316,56 +326,7 @@ This script is designed to be production-ready and maintainable. Key design prin
 - **Robust Error Handling**: Graceful degradation and detailed error reporting
 - **Exact Replication**: Matches ComfyUI's internal conversion exactly
 
-### Running tests (offline)
-
-#### Master test suite (recommended)
-
-```bash
-# Run the full 154-test suite with HTML report (offline, no server needed)
-python examples/unittests/main.py --non-interactive --no-browser
-
-# Run a specific stage only
-python examples/unittests/main.py --stage 8 --non-interactive --no-browser
-```
-
-What to expect:
-- **154 tests** across 15 stages: conversion, node access, widgets, bypass, fixtures, and more
-- **HTML report** generated at `autoflow-test-suite/outputs/index.html`
-- **Exit code**: `0` on success, non-zero on failure
-- Stages 5 (fixtures) and 6 (server) are skipped unless `--fixtures-dir` / `--server-url` are provided
-
-#### Legacy unit tests
-
-```bash
-# Run unittest discovery (subset of tests)
-python -m unittest discover -s examples/unittests -v
-```
-
-What to expect:
-- **Output**: test names + `... ok`, then a final `OK`
-- **Exit code**: `0` on success, non-zero on failure
-
-#### Docs examples test harness (`docs-test.py`)
-
-This runs the fenced code examples from `docs/*.md` in a sandbox.
-
-```bash
-# Offline run: compiles python blocks, optionally executes safe ones, and runs safe CLI blocks
-python examples/code/docs-test.py --mode offline --exec-python --run-cli
-
-# List available labeled examples
-python examples/code/docs-test.py --list
-
-# Run only a subset (labels come from --list)
-python examples/code/docs-test.py --mode offline --only "docs/convert.md#1:python" --exec-python
-```
-
-What to expect:
-- **Output**: `START ...` / `END ... (ok)` banners per doc block
-- **Skips**: network-looking snippets print `SKIP` unless you run in online mode
-- **Exit code**: `0` if all selected examples pass; `1` if any fail
-
-Diagram: see [`docs/contributing-tests.md`](docs/contributing-tests.md)
+For development setup, running tests, and code style guidelines, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 

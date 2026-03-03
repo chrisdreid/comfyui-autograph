@@ -13,19 +13,56 @@ pip install -e .
 
 No external dependencies are required — the library is pure stdlib Python.
 
-## Running Tests
+## Running Tests (offline)
 
-**Unit tests** (no network/ComfyUI required):
+### Master test suite (recommended)
 
 ```bash
+# Run the full 154-test suite with HTML report (offline, no server needed)
+python examples/unittests/main.py --non-interactive --no-browser
+
+# Run a specific stage only
+python examples/unittests/main.py --stage 8 --non-interactive --no-browser
+```
+
+What to expect:
+- **154 tests** across 15 stages: conversion, node access, widgets, bypass, fixtures, and more
+- **HTML report** generated at `autoflow-test-suite/outputs/index.html`
+- **Exit code**: `0` on success, non-zero on failure
+- Stages 5 (fixtures) and 6 (server) are skipped unless `--fixtures-dir` / `--server-url` are provided
+
+### Legacy unit tests
+
+```bash
+# Run unittest discovery (subset of tests)
 python -m unittest discover -s examples/unittests -v
 ```
 
-**Docs integration tests** (validate README/docs code snippets):
+What to expect:
+- **Output**: test names + `... ok`, then a final `OK`
+- **Exit code**: `0` on success, non-zero on failure
+
+### Docs examples test harness (`docs-test.py`)
+
+This runs the fenced code examples from `docs/*.md` in a sandbox.
 
 ```bash
-python docs/docs-test.py
+# Offline run: compiles python blocks, optionally executes safe ones, and runs safe CLI blocks
+python examples/code/docs-test.py --mode offline --exec-python --run-cli
+
+# List available labeled examples
+python examples/code/docs-test.py --list
+
+# Run only a subset (labels come from --list)
+python examples/code/docs-test.py --mode offline --only "docs/convert.md#1:python" --exec-python
 ```
+
+What to expect:
+- **Output**: `START ...` / `END ... (ok)` banners per doc block
+- **Skips**: network-looking snippets print `SKIP` unless you run in online mode
+- **Exit code**: `0` if all selected examples pass; `1` if any fail
+
+Diagram: see [`docs/contributing-tests.md`](docs/contributing-tests.md)
 
 ## Code Style
 
