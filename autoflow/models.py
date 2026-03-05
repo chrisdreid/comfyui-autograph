@@ -932,9 +932,36 @@ class FlowNodeProxy(_DictMixin):
             if widget_names and name in widget_names:
                 wv0 = node.get("widgets_values")
                 wv0_list = wv0 if isinstance(wv0, list) else []
+                # Use alignment to find the correct position of this widget
+                # in the original array, then update in-place to preserve
+                # values unknown to node_info (e.g. control_after_generate).
                 aligned = align_widgets_values(self.type, list(wv0_list), widget_names, node_info=node_info)
-                aligned[widget_names.index(name)] = value
-                node["widgets_values"] = aligned
+                target_idx = widget_names.index(name)
+                old_val = aligned[target_idx] if target_idx < len(aligned) else None
+                # Find the position of old_val in the original array
+                # by tracing the alignment mapping
+                updated = False
+                if wv0_list:
+                    # Build a forward map: for each widget_name[i], which
+                    # original index does it correspond to?
+                    remaining = list(range(len(wv0_list)))
+                    idx_map: dict = {}
+                    for wi, wn in enumerate(widget_names):
+                        wval = aligned[wi] if wi < len(aligned) else None
+                        for ri, oi in enumerate(remaining):
+                            if oi < len(wv0_list) and wv0_list[oi] == wval:
+                                idx_map[wi] = oi
+                                remaining.pop(ri)
+                                break
+                    if target_idx in idx_map:
+                        wv0_list[idx_map[target_idx]] = value
+                        node["widgets_values"] = wv0_list
+                        updated = True
+                if not updated:
+                    # Fallback: replace with aligned (for newly created nodes
+                    # where widgets_values may be empty or mismatched)
+                    aligned[target_idx] = value
+                    node["widgets_values"] = aligned
                 return
 
         node[name] = value

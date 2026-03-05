@@ -483,8 +483,10 @@ class Flow(_MappingWrapper):
         """
         if embed_workflow:
             import json as _json
-            # Build a clean serializable copy (same as flow.save() output)
-            flow_dict = _json.loads(_json.dumps(dict(self._flow), default=str))
+            # Use the same serialization path as flow.save() — to_json() handles
+            # custom types (WidgetValue, etc.) properly via the Workflow encoder.
+            raw_json = self._flow.to_json(indent=None)
+            flow_dict = _json.loads(raw_json)
             # Strip internal-only keys that aren't part of the workflow file
             flow_dict.pop("node_info", None)
 
