@@ -1889,6 +1889,12 @@ class NodeRef:
             return iter(self.unwrap())
 
     def __getitem__(self, key):
+        # Support [0] indexing when NodeRef is returned from flow.nodes.X
+        # (single-node case — acts like a 1-element list)
+        if isinstance(key, int):
+            if key == 0:
+                return self
+            raise IndexError(f"NodeRef index out of range (single node, got index {key})")
         try:
             return self._p[key]
         except Exception:
