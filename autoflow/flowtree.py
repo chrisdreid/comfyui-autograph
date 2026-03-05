@@ -1385,6 +1385,8 @@ class SlotRef:
         if self.direction == "input":
             # Input: just delegate to NodeRef.disconnect
             self.node.disconnect(self.name)
+            # Auto-demote if promoted attr
+            self.node._maybe_demote(self.name)
         else:
             # Output: find all links from this output slot
             outputs = node_dict.get("outputs", [])
@@ -1451,9 +1453,10 @@ class InputsView:
         ks.inputs                     # concise: {model: ← Ckpt.MODEL, positive: ○}
         ks.inputs.model               # → SlotRef (for >> and << wiring)
         ks.inputs['model']            # → SlotRef (same)
+        ks.inputs.seed                # → auto-promotes attr to input slot, returns SlotRef
         dict(ks.inputs)               # → {name: SlotRef, ...}
         ks.inputs.pop('model')        # disconnect + return SlotRef
-        del ks.inputs['model']        # disconnect
+        del ks.inputs['model']        # disconnect (auto-demotes if promoted)
         ks.inputs.status()            # full ANSI-colored status table
     """
 
@@ -1506,28 +1509,85 @@ class InputsView:
         except Exception:
             return None
 
+    def _get_promotable_attrs(self) -> Dict[str, str]:
+        """Return promotable attr names → types from node_info (attrs not yet in inputs)."""
+        try:
+            from .connection import get_promotable_attr_names
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is None:
+                return {}
+            ni = getattr(flow._flow, "node_info", None)
+            if ni is None:
+                return {}
+            ct = self._node.type
+            all_promotable = get_promotable_attr_names(ct, ni)
+            # Only return attrs NOT already in current inputs
+            return {k: v for k, v in all_promotable.items() if k not in self._names}
+        except Exception:
+            return {}
+
     def __dir__(self) -> List[str]:
-        return sorted(set(self._names) | {"status", "pop", "keys", "values", "items"})
+        promotable = set(self._get_promotable_attrs().keys())
+        return sorted(set(self._names) | promotable | {"status", "pop", "keys", "values", "items"})
 
     def __getattr__(self, name: str) -> SlotRef:
         if name.startswith("_"):
             raise AttributeError(name)
-        if name not in self._names:
-            raise AttributeError(f"No input '{name}' on {self._node.type}. Available: {self._names}")
-        return self._make_slot(name)
+        if name in self._names:
+            return self._make_slot(name)
+        # Check if it's a promotable attr — auto-promote
+        promotable = self._get_promotable_attrs()
+        if name in promotable:
+            self._node.to_input(name)
+            # Re-read names after promotion
+            try:
+                flow = object.__getattribute__(self._node, "_flow")
+                if flow is not None:
+                    nd = self._node._find_node_dict(flow._flow)
+                    self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+            except Exception:
+                pass
+            return self._make_slot(name)
+        raise AttributeError(f"No input '{name}' on {self._node.type}. Available: {self._names}")
 
     def __getitem__(self, name: str) -> SlotRef:
-        if name not in self._names:
-            raise KeyError(f"No input '{name}' on {self._node.type}. Available: {self._names}")
-        return self._make_slot(name)
+        if name in self._names:
+            return self._make_slot(name)
+        # Auto-promote if promotable attr
+        promotable = self._get_promotable_attrs()
+        if name in promotable:
+            self._node.to_input(name)
+            try:
+                flow = object.__getattribute__(self._node, "_flow")
+                if flow is not None:
+                    nd = self._node._find_node_dict(flow._flow)
+                    self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+            except Exception:
+                pass
+            return self._make_slot(name)
+        raise KeyError(f"No input '{name}' on {self._node.type}. Available: {self._names}")
 
     def __delitem__(self, name: str) -> None:
         if name not in self._names:
             raise KeyError(f"No input '{name}' on {self._node.type}.")
-        self._make_slot(name).disconnect()
+        slot = self._make_slot(name)
+        slot.disconnect()
+        # Auto-demote if it was a promoted attr
+        self._node._maybe_demote(name)
+        # Refresh names
+        try:
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is not None:
+                nd = self._node._find_node_dict(flow._flow)
+                self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+        except Exception:
+            pass
 
     def __contains__(self, name: str) -> bool:
-        return name in self._names
+        if name in self._names:
+            return True
+        # Also check promotable attrs
+        return name in self._get_promotable_attrs()
 
     def __iter__(self):
         return iter(self._names)
@@ -1545,11 +1605,21 @@ class InputsView:
         return [(n, self._make_slot(n)) for n in self._names]
 
     def pop(self, name: str) -> SlotRef:
-        """Disconnect input and return the SlotRef."""
+        """Disconnect input, auto-demote if promoted, return the SlotRef."""
         if name not in self._names:
             raise KeyError(f"No input '{name}' on {self._node.type}.")
         slot = self._make_slot(name)
         slot.disconnect()
+        # Auto-demote if it was a promoted attr
+        self._node._maybe_demote(name)
+        # Refresh names
+        try:
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is not None:
+                nd = self._node._find_node_dict(flow._flow)
+                self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+        except Exception:
+            pass
         return slot
 
     def __repr__(self) -> str:
@@ -1929,7 +1999,7 @@ class NodeRef:
         # Methods that actually work on NodeRef
         base = {"attrs", "to_dict", "unwrap", "tree",
                 "type", "title", "where", "meta",
-                "inputs", "outputs",
+                "inputs", "outputs", "to_input", "to_attr",
                 "connect", "disconnect", "connections", "downstream"}
         # Add widget names (these are readable/writable attributes)
         try:
@@ -1983,6 +2053,113 @@ class NodeRef:
             return {n: getattr(self._p, n, None) for n in names}
         except Exception:
             return {}
+
+    # ------------------------------------------------------------------
+    # Attr ↔ Input promotion (widget-to-slot conversion)
+    # ------------------------------------------------------------------
+
+    def to_input(self, name: str) -> None:
+        """Promote an attr to a connectable input slot.
+
+        Creates an input slot entry with a ``widget`` marker so ComfyUI
+        recognises it as a promoted widget.  Once promoted the attr
+        appears in ``node.inputs`` and can be wired via ``>>`` / ``<<``.
+
+        Args:
+            name: The attr name (e.g. ``"width"``, ``"seed"``).
+
+        Raises:
+            ValueError: If the name is not a promotable attr or is already
+                an input slot.
+        """
+        flow_data = self._get_flow_data()
+        nd = self._find_node_dict(flow_data)
+
+        # Check it's not already an input
+        for inp in nd.get("inputs", []):
+            if inp.get("name") == name:
+                return  # already promoted, nothing to do
+
+        # Look up the type from node_info
+        from .connection import get_promotable_attr_names
+        ni = getattr(flow_data, "node_info", None)
+        if ni is None:
+            raise ValueError(
+                f"Cannot promote '{name}' — no node_info available. "
+                f"Provide node_info when creating the Flow."
+            )
+        ct = nd.get("type", "")
+        promotable = get_promotable_attr_names(ct, ni)
+        if name not in promotable:
+            raise ValueError(
+                f"'{name}' is not a promotable attr on {ct}. "
+                f"Promotable: {list(promotable.keys())}"
+            )
+
+        slot_type = promotable[name]
+        new_input = {
+            "name": name,
+            "type": slot_type,
+            "widget": {"name": name},
+            "link": None,
+        }
+        nd.setdefault("inputs", []).append(new_input)
+
+    def to_attr(self, name: str) -> None:
+        """Demote an input slot back to an attr-only value.
+
+        Disconnects any connection and removes the input slot from the
+        node's inputs list.  The value in ``widgets_values`` is preserved.
+
+        Args:
+            name: The input slot name to demote.
+
+        Raises:
+            ValueError: If the input slot doesn't have a ``widget`` marker
+                (i.e. it's a natural connection input, not a promoted attr).
+        """
+        flow_data = self._get_flow_data()
+        nd = self._find_node_dict(flow_data)
+
+        inputs = nd.get("inputs", [])
+        target_idx = None
+        target_inp = None
+        for i, inp in enumerate(inputs):
+            if inp.get("name") == name:
+                target_idx = i
+                target_inp = inp
+                break
+
+        if target_inp is None:
+            return  # not an input slot, nothing to do
+
+        if not isinstance(target_inp.get("widget"), dict):
+            raise ValueError(
+                f"'{name}' is a natural connection input on {nd.get('type', '?')}, "
+                f"not a promoted attr. Cannot demote."
+            )
+
+        # Disconnect if connected
+        if target_inp.get("link") is not None:
+            try:
+                self.disconnect(name)
+            except Exception:
+                pass
+
+        # Remove from inputs list
+        inputs.pop(target_idx)
+
+    def _maybe_demote(self, name: str) -> None:
+        """Auto-demote an input to attr if it has a widget marker (was promoted)."""
+        try:
+            flow_data = self._get_flow_data()
+            nd = self._find_node_dict(flow_data)
+            for inp in nd.get("inputs", []):
+                if inp.get("name") == name and isinstance(inp.get("widget"), dict):
+                    self.to_attr(name)
+                    return
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Connection management (builder API)

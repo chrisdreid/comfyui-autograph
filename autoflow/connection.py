@@ -232,3 +232,49 @@ def get_input_default(
             return spec[1].get("default")
         return None
     return None
+
+
+def get_promotable_attr_names(
+    class_type: str,
+    node_info: Dict[str, Any],
+) -> Dict[str, str]:
+    """Return attr names that can be promoted to input slots, mapped to their types.
+
+    These are the widget/attr inputs (not connection-only) that can be
+    converted to connectable input slots via ``to_input()`` or auto-promotion.
+
+    Args:
+        class_type: The node class type.
+        node_info: The full node_info dict.
+
+    Returns:
+        Dict mapping promotable attr name → slot type (e.g. ``{"width": "INT", "seed": "INT"}``).
+    """
+    type_info = node_info.get(class_type)
+    if type_info is None:
+        return {}
+
+    inputs_def = type_info.get("input", {})
+    if not _is_dict_like(inputs_def):
+        return {}
+
+    promotable: Dict[str, str] = {}
+    for section in ["required", "optional"]:
+        section_inputs = inputs_def.get(section, {})
+        if not _is_dict_like(section_inputs):
+            continue
+        for name, spec in section_inputs.items():
+            if not isinstance(spec, (list, tuple)) or len(spec) == 0:
+                continue
+            if _is_connection_only_input(spec):
+                continue
+            # Widget/attr — determine its type string
+            head = spec[0]
+            if isinstance(head, str):
+                promotable[name] = head
+            elif isinstance(head, (list, tuple)):
+                # Classic combo: [[choice1, choice2], ...]
+                promotable[name] = "COMBO"
+            else:
+                promotable[name] = "STRING"
+    return promotable

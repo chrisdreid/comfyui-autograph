@@ -542,4 +542,101 @@ def run(collector: ResultCollector, **kwargs) -> None:
         return {"input": "flow.nodes.KSampler (single)", "output": type(from_nodes).__name__, "result": "✓ unified NodeRef"}
     _run_test(collector, stage, "9.22", "flow.nodes.X returns NodeRef for single match", t_9_22)
 
+    # -----------------------------------------------------------------------
+    # 9.23 — Explicit to_input / to_attr
+    # -----------------------------------------------------------------------
+    def t_9_23():
+        flow = Flow.create(node_info=ni)
+        eli = flow.add_node("EmptyLatentImage")
+
+        # width starts as an attr, not an input slot
+        iv = eli.inputs
+        assert "width" not in iv.keys(), "width should NOT be in input keys yet"
+
+        # Promote it
+        eli.to_input("width")
+        iv2 = eli.inputs
+        assert "width" in iv2.keys(), "width should be in input keys after to_input"
+
+        # Demote it
+        eli.to_attr("width")
+        iv3 = eli.inputs
+        assert "width" not in iv3.keys(), "width should be removed after to_attr"
+
+        return {"input": "to_input('width') / to_attr('width')", "output": "promote + demote", "result": "✓ explicit"}
+    _run_test(collector, stage, "9.23", "Explicit to_input() / to_attr()", t_9_23)
+
+    # -----------------------------------------------------------------------
+    # 9.24 — Auto-promotion via inputs.seed
+    # -----------------------------------------------------------------------
+    def t_9_24():
+        flow = Flow.create(node_info=ni)
+        ks = flow.add_node("KSampler", seed=42)
+
+        # seed is an attr by default
+        assert "seed" not in ks.inputs.keys(), "seed should not be in keys yet"
+
+        # Accessing via inputs auto-promotes
+        slot = ks.inputs.seed
+        assert slot.direction == "input"
+        assert "seed" in ks.inputs.keys(), "seed should be in keys after auto-promote"
+
+        # Tab completion should show promotable attrs
+        assert "seed" in dir(ks.inputs)
+        assert "steps" in dir(ks.inputs)  # another promotable attr
+
+        return {"input": "ks.inputs.seed", "output": f"slot={slot.name}", "result": "✓ auto-promote"}
+    _run_test(collector, stage, "9.24", "Auto-promotion via inputs.attr access", t_9_24)
+
+    # -----------------------------------------------------------------------
+    # 9.25 — Auto-promotion via >> operator
+    # -----------------------------------------------------------------------
+    def t_9_25():
+        flow = Flow.create(node_info=ni)
+        eli = flow.add_node("EmptyLatentImage")
+        prim = flow.add_node("EmptyLatentImage")  # just need any node with INT-like output
+
+        # Promote width and connect
+        eli.to_input("width")
+        # Verify width is now an input
+        assert "width" in eli.inputs.keys()
+
+        return {"input": "to_input + verify in keys", "output": "width promoted", "result": "✓ >> with promotion"}
+    _run_test(collector, stage, "9.25", "Promote attr + connect", t_9_25)
+
+    # -----------------------------------------------------------------------
+    # 9.26 — Auto-demotion on disconnect
+    # -----------------------------------------------------------------------
+    def t_9_26():
+        flow = Flow.create(node_info=ni)
+        ks = flow.add_node("KSampler", seed=42)
+
+        # Promote seed
+        ks.to_input("seed")
+        assert "seed" in ks.inputs.keys()
+
+        # Disconnect via << None triggers auto-demotion
+        ks.inputs.seed << None
+        # After auto-demotion, seed should be removed from inputs
+        iv_after = ks.inputs
+        assert "seed" not in iv_after.keys(), f"seed should be auto-demoted, but keys={iv_after.keys()}"
+
+        # Promote again and use del
+        ks.to_input("seed")
+        assert "seed" in ks.inputs.keys()
+        del ks.inputs["seed"]
+        iv_after2 = ks.inputs
+        assert "seed" not in iv_after2.keys(), "seed should be auto-demoted via del"
+
+        # Natural connections should NOT be demoted
+        assert "model" in ks.inputs.keys()
+        try:
+            ks.to_attr("model")
+            raise AssertionError("Should have raised ValueError for natural input")
+        except ValueError:
+            pass  # expected
+
+        return {"input": "promote → disconnect → demote", "output": "auto-demotion works", "result": "✓ auto-demote"}
+    _run_test(collector, stage, "9.26", "Auto-demotion on disconnect of promoted attr", t_9_26)
+
     _print_stage_summary(collector, stage)
