@@ -660,11 +660,13 @@ class WidgetValue:
     so ``node.seed == 200`` still works as expected.
     """
 
-    __slots__ = ("_value", "_spec")
+    __slots__ = ("_value", "_spec", "_node_ref", "_attr_name")
 
     def __init__(self, value: Any, spec: Optional[list] = None):
         object.__setattr__(self, "_value", value)
         object.__setattr__(self, "_spec", spec)
+        object.__setattr__(self, "_node_ref", None)
+        object.__setattr__(self, "_attr_name", None)
 
     # --- transparent delegation ---
     def __repr__(self) -> str:
@@ -768,8 +770,24 @@ class WidgetValue:
         """Return the raw node_info spec for this input."""
         return self._spec
 
+    def to_input(self) -> None:
+        """Promote this attr to a connectable input slot."""
+        nr = self._node_ref
+        name = self._attr_name
+        if nr is None or name is None:
+            raise RuntimeError("WidgetValue has no node reference — cannot promote.")
+        nr.to_input(name)
+
+    def to_attr(self) -> None:
+        """Demote the corresponding input slot back to attr-only."""
+        nr = self._node_ref
+        name = self._attr_name
+        if nr is None or name is None:
+            raise RuntimeError("WidgetValue has no node reference — cannot demote.")
+        nr.to_attr(name)
+
     def __dir__(self) -> List[str]:
-        return ["value", "choices", "tooltip", "spec"]
+        return ["value", "choices", "tooltip", "spec", "to_input", "to_attr"]
 
 
 class FlowNodeProxy(_DictMixin):

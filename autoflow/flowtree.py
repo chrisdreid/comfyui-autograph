@@ -1170,6 +1170,49 @@ class _CallableList(list):
         return self
 
 
+def _wrap_attr_value(value: Any, node: "NodeRef", name: str) -> Any:
+    """Wrap a widget/attr value so it retains its type but gains .to_input()/.to_attr().
+
+    Returns a subclass of the original type (int, float, str, bool) that
+    transparently behaves like the value but adds promotion methods.
+    For non-primitive types, returns the raw value unchanged.
+    """
+    base = type(value)
+    if base not in (int, float, str, bool):
+        return value
+
+    # Dynamically create a subclass with promotion methods
+    # (cached per base type to avoid class explosion)
+    cls = _ATTR_VALUE_CLASSES.get(base)
+    if cls is None:
+        class AttrValue(base):  # type: ignore[misc]
+            __slots__ = ("_node_ref", "_attr_name")
+
+            def __new__(cls, val: Any, node_ref: "NodeRef", attr_name: str) -> "AttrValue":
+                obj = super().__new__(cls, val)
+                obj._node_ref = node_ref
+                obj._attr_name = attr_name
+                return obj
+
+            def to_input(self) -> None:
+                """Promote this attr to a connectable input slot."""
+                self._node_ref.to_input(self._attr_name)
+
+            def to_attr(self) -> None:
+                """Demote the corresponding input slot back to attr-only."""
+                self._node_ref.to_attr(self._attr_name)
+
+        AttrValue.__name__ = f"AttrValue_{base.__name__}"
+        AttrValue.__qualname__ = AttrValue.__name__
+        _ATTR_VALUE_CLASSES[base] = AttrValue
+        cls = AttrValue
+
+    return cls(value, node, name)
+
+
+_ATTR_VALUE_CLASSES: Dict[type, type] = {}
+
+
 class SlotRef:
     """Reference to a specific slot on a node, enabling the >> operator.
 
@@ -1960,7 +2003,20 @@ class NodeRef:
             except Exception:
                 pass
 
-        return getattr(self._p, name)
+        # Inject node reference for .to_input()/.to_attr() on widget values
+        raw = getattr(self._p, name)
+        try:
+            from .models import WidgetValue
+            if isinstance(raw, WidgetValue):
+                object.__setattr__(raw, "_node_ref", self)
+                object.__setattr__(raw, "_attr_name", name)
+                return raw
+            wnames = self._widget_names()
+            if name in wnames:
+                return _wrap_attr_value(raw, self, name)
+        except Exception:
+            pass
+        return raw
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in ("_p", "kind", "addr", "group", "index", "path", "where", "dictpath"):
@@ -2000,6 +2056,7 @@ class NodeRef:
         base = {"attrs", "to_dict", "unwrap", "tree",
                 "type", "title", "where", "meta",
                 "inputs", "outputs", "to_input", "to_attr",
+                "remove", "delete",
                 "connect", "disconnect", "connections", "downstream"}
         # Add widget names (these are readable/writable attributes)
         try:
@@ -2160,6 +2217,24 @@ class NodeRef:
                     return
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Node removal convenience
+    # ------------------------------------------------------------------
+
+    def remove(self) -> None:
+        """Remove this node (and all its connections) from the flow."""
+        flow = object.__getattribute__(self, "_flow")
+        if flow is None:
+            raise RuntimeError(
+                "This NodeRef has no flow reference — remove() requires "
+                "a NodeRef created by Flow.add_node() or accessed from a builder Flow."
+            )
+        flow.remove_node(self)
+
+    def delete(self) -> None:
+        """Alias for ``remove()``."""
+        self.remove()
 
     # ------------------------------------------------------------------
     # Connection management (builder API)

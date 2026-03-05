@@ -639,4 +639,54 @@ def run(collector: ResultCollector, **kwargs) -> None:
         return {"input": "promote → disconnect → demote", "output": "auto-demotion works", "result": "✓ auto-demote"}
     _run_test(collector, stage, "9.26", "Auto-demotion on disconnect of promoted attr", t_9_26)
 
+    # -----------------------------------------------------------------------
+    # 9.27 — AttrValue .to_input() on widget values
+    # -----------------------------------------------------------------------
+    def t_9_27():
+        flow = Flow.create(node_info=ni)
+        eli = flow.add_node("EmptyLatentImage")
+
+        # eli.width returns a WidgetValue (or int) with .to_input()
+        w = eli.width
+        assert int(w) == 512 or int(w) >= 0, "width should have an int value"
+        assert hasattr(w, "to_input"), "width value should have .to_input()"
+        assert hasattr(w, "to_attr"), "width value should have .to_attr()"
+
+        # Promote via attr value
+        w.to_input()
+        assert "width" in eli.inputs.keys(), "width should be promoted after .to_input()"
+
+        # Demote via attr value
+        w.to_attr()
+        assert "width" not in eli.inputs.keys(), "width should be demoted after .to_attr()"
+
+        return {"input": "eli.width.to_input()", "output": "AttrValue works", "result": "✓ AttrValue"}
+    _run_test(collector, stage, "9.27", "AttrValue .to_input() / .to_attr() on widget values", t_9_27)
+
+    # -----------------------------------------------------------------------
+    # 9.28 — node.remove() / node.delete()
+    # -----------------------------------------------------------------------
+    def t_9_28():
+        flow = Flow.create(node_info=ni)
+        ks = flow.add_node("KSampler", seed=42)
+        ckpt = flow.add_node("CheckpointLoaderSimple")
+        ckpt.outputs.MODEL >> ks.inputs.model
+
+        # Count nodes before
+        count_before = len(flow.nodes)
+
+        # Remove via node.remove()
+        ks.remove()
+        count_after = len(flow.nodes)
+        assert count_after == count_before - 1, f"Expected {count_before - 1} nodes, got {count_after}"
+
+        # delete() is an alias
+        ckpt2 = flow.add_node("CheckpointLoaderSimple")
+        count2 = len(flow.nodes)
+        ckpt2.delete()
+        assert len(flow.nodes) == count2 - 1
+
+        return {"input": "node.remove() / node.delete()", "output": f"{count_before} → {count_after}", "result": "✓ remove/delete"}
+    _run_test(collector, stage, "9.28", "node.remove() / node.delete() convenience", t_9_28)
+
     _print_stage_summary(collector, stage)
