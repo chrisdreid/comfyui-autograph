@@ -809,5 +809,50 @@ def run(collector: ResultCollector, **kwargs) -> None:
         return {"input": "canvas + extra + order", "output": "all pass", "result": "✓ flow features"}
     _run_test(collector, stage, "9.31", "Flow canvas, extra, compute_order()", t_9_31)
 
+    # -----------------------------------------------------------------------
+    # 9.32 — Regression: __setattr__ preserves extra widgets_values
+    # -----------------------------------------------------------------------
+    def t_9_32():
+        import json as _json, tempfile, os
+        # Create a clean plain-dict copy of node_info, strip control_after_generate
+        # to simulate how ComfyUI's server object_info API returns KSampler
+        ni_clean = _json.loads(_json.dumps(dict(BUILTIN_NODE_INFO), default=str))
+        del ni_clean["KSampler"]["input"]["required"]["control_after_generate"]
+
+        # Load workflow (KSampler has 7 widgets_values including "fixed")
+        flow = Flow('examples/workflows/workflow.json', node_info=ni_clean)
+        ks = flow.nodes.KSampler
+
+        # Read original widgets_values from the raw node dict
+        # Expected: [seed, "fixed", steps, cfg, sampler, scheduler, denoise]
+        nd = ks._find_node_dict(flow._flow)
+        wv_orig = list(nd.get("widgets_values", []))
+        assert len(wv_orig) == 7, f"Expected 7 values, got {len(wv_orig)}"
+
+        # Set seed via proxy (same path as user does ks.seed = ...)
+        setattr(ks._p, "seed", 99999)
+
+        # Save → reload (the critical path that exposed the bug)
+        tmp = os.path.join(tempfile.gettempdir(), "test_regression_9_32.json")
+        flow.save(tmp)
+        with open(tmp, encoding="utf-8") as f:
+            saved = json.load(f)
+        os.remove(tmp)
+
+        # Find KSampler in saved JSON and check widgets_values
+        ks_node = [n for n in saved.get("nodes", []) if n.get("type") == "KSampler"][0]
+        wv = ks_node["widgets_values"]
+
+        assert len(wv) == 7, f"Expected 7 widgets_values, got {len(wv)}: {wv}"
+        assert wv[0] == 99999, f"seed wrong: {wv[0]}"
+        assert wv[1] == "fixed", f"control_after_generate lost: {wv[1]}"
+        assert wv[2] == wv_orig[2], f"steps shifted: {wv[2]} != {wv_orig[2]}"
+        assert wv[3] == wv_orig[3], f"cfg shifted: {wv[3]} != {wv_orig[3]}"
+        assert wv[4] == wv_orig[4], f"sampler shifted: {wv[4]} != {wv_orig[4]}"
+        assert wv[5] == wv_orig[5], f"scheduler shifted: {wv[5]} != {wv_orig[5]}"
+
+        return {"input": "load → set seed → save → verify", "output": f"7 values, seed={wv[0]}", "result": "✓ no shift"}
+    _run_test(collector, stage, "9.32", "Regression: setattr preserves extra widgets_values", t_9_32)
+
     _print_stage_summary(collector, stage)
 
