@@ -689,4 +689,125 @@ def run(collector: ResultCollector, **kwargs) -> None:
         return {"input": "node.remove() / node.delete()", "output": f"{count_before} → {count_after}", "result": "✓ remove/delete"}
     _run_test(collector, stage, "9.28", "node.remove() / node.delete() convenience", t_9_28)
 
+    # -----------------------------------------------------------------------
+    # 9.29 — Node GUI properties (bypass, mute, color, title, etc.)
+    # -----------------------------------------------------------------------
+    def t_9_29():
+        flow = Flow.create(node_info=ni)
+        ks = flow.add_node("KSampler", seed=42)
+
+        # mode / bypass / mute
+        assert ks.mode == 0
+        assert ks.bypass == False
+        assert ks.mute == False
+
+        ks.bypass = True
+        assert ks.mode == 4
+        assert ks.bypass == True
+        ks.bypass = False
+        assert ks.mode == 0
+
+        ks.mute = True
+        assert ks.mode == 2
+        assert ks.mute == True
+        ks.mute = False
+        assert ks.mode == 0
+
+        # color / bgcolor
+        assert ks.color is None
+        ks.color = "#232"
+        ks.bgcolor = "#353"
+        assert ks.color == "#232"
+        assert ks.bgcolor == "#353"
+        ks.color = None  # remove
+        assert ks.color is None
+
+        # title
+        assert ks.title == "KSampler"  # default = type
+        ks.title = "My Sampler"
+        assert ks.title == "My Sampler"
+
+        # collapsed
+        assert ks.collapsed == False
+        ks.collapsed = True
+        assert ks.collapsed == True
+        ks.collapsed = False
+        assert ks.collapsed == False
+
+        # pos / size
+        ks.pos = (500, 300)
+        assert ks.pos == (500, 300)
+        ks.size = (400, 200)
+        assert ks.size == (400, 200)
+
+        # Check all in __dir__
+        d = dir(ks)
+        for name in ["bypass", "mute", "mode", "color", "bgcolor", "collapsed", "pos", "size"]:
+            assert name in d, f"{name} not in dir(ks)"
+
+        return {"input": "bypass/mute/color/title/collapsed/pos/size", "output": "all pass", "result": "✓ GUI props"}
+    _run_test(collector, stage, "9.29", "Node GUI properties (bypass, mute, color, etc.)", t_9_29)
+
+    # -----------------------------------------------------------------------
+    # 9.30 — Flow groups
+    # -----------------------------------------------------------------------
+    def t_9_30():
+        flow = Flow.create(node_info=ni)
+        ks = flow.add_node("KSampler", seed=42)
+        ckpt = flow.add_node("CheckpointLoaderSimple")
+
+        # No groups initially
+        assert len(flow.groups) == 0
+
+        # Add group with manual bounding
+        g = flow.add_group("Step 1", bounding=[0, 0, 400, 300], color="#ff0000")
+        assert g["title"] == "Step 1"
+        assert g["color"] == "#ff0000"
+        assert len(flow.groups) == 1
+
+        # Add group auto-bounded from nodes
+        g2 = flow.add_group("Step 2", nodes=[ks, ckpt])
+        assert g2["title"] == "Step 2"
+        assert len(flow.groups) == 2
+        assert len(g2["bounding"]) == 4
+
+        # Remove group
+        flow.remove_group("Step 1")
+        assert len(flow.groups) == 1
+        assert flow.groups[0]["title"] == "Step 2"
+
+        return {"input": "add/remove groups", "output": f"{len(flow.groups)} groups", "result": "✓ groups"}
+    _run_test(collector, stage, "9.30", "Flow groups (add, remove, auto-bound)", t_9_30)
+
+    # -----------------------------------------------------------------------
+    # 9.31 — Flow canvas, extra, compute_order
+    # -----------------------------------------------------------------------
+    def t_9_31():
+        flow = Flow.create(node_info=ni)
+        ks = flow.add_node("KSampler", seed=42)
+        ckpt = flow.add_node("CheckpointLoaderSimple")
+        ckpt.outputs.MODEL >> ks.inputs.model
+
+        # Canvas viewport
+        flow.canvas_scale = 0.5
+        assert flow.canvas_scale == 0.5
+        flow.canvas_offset = (100, 200)
+        assert flow.canvas_offset == (100, 200)
+
+        # Extra metadata
+        assert isinstance(flow.extra, dict)
+        flow.extra["test_key"] = "test_val"
+        assert flow.extra["test_key"] == "test_val"
+
+        # Compute execution order
+        flow.compute_order()
+        # ckpt should be before ks (ckpt has no predecessors)
+        ckpt_nd = ckpt._find_node_dict(flow._flow)
+        ks_nd = ks._find_node_dict(flow._flow)
+        assert ckpt_nd.get("order", -1) < ks_nd.get("order", -1), "ckpt should be ordered before ks"
+
+        return {"input": "canvas + extra + order", "output": "all pass", "result": "✓ flow features"}
+    _run_test(collector, stage, "9.31", "Flow canvas, extra, compute_order()", t_9_31)
+
     _print_stage_summary(collector, stage)
+

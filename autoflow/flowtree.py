@@ -878,6 +878,158 @@ class Flow(_MappingWrapper):
             for row, n in enumerate(group):
                 n["pos"] = [d * spacing_x, row * spacing_y]
 
+    # ------------------------------------------------------------------
+    # Groups (visual containers — no execution impact)
+    # ------------------------------------------------------------------
+
+    @property
+    def groups(self) -> List[Dict[str, Any]]:
+        """List of visual groups in the flow."""
+        return self._flow.get("groups", [])
+
+    def add_group(
+        self,
+        title: str,
+        *,
+        color: str = "#3f789e",
+        font_size: int = 24,
+        bounding: Optional[List[float]] = None,
+        nodes: Optional[List[Any]] = None,
+    ) -> Dict[str, Any]:
+        """Add a visual group to the flow.
+
+        Args:
+            title: Display title for the group.
+            color: Group color (hex string).
+            font_size: Title font size.
+            bounding: Manual ``[x, y, w, h]`` bounding box.
+            nodes: Optional list of NodeRefs to auto-compute bounding from.
+
+        Returns:
+            The created group dict.
+        """
+        groups = self._flow.setdefault("groups", [])
+        # Auto-compute next ID
+        max_id = max((g.get("id", 0) for g in groups), default=0)
+        new_id = max_id + 1
+
+        # Auto-compute bounding from nodes if provided
+        if bounding is None and nodes:
+            padding = 60
+            xs, ys, x2s, y2s = [], [], [], []
+            for node in nodes:
+                if isinstance(node, NodeRef):
+                    nd = node._find_node_dict(self._flow)
+                else:
+                    nd = node
+                p = nd.get("pos", [0, 0])
+                s = nd.get("size", [300, 200])
+                xs.append(p[0])
+                ys.append(p[1])
+                x2s.append(p[0] + s[0])
+                y2s.append(p[1] + s[1])
+            if xs:
+                bounding = [
+                    min(xs) - padding,
+                    min(ys) - padding - 30,  # extra for title bar
+                    max(x2s) - min(xs) + 2 * padding,
+                    max(y2s) - min(ys) + 2 * padding + 30,
+                ]
+
+        if bounding is None:
+            bounding = [0, 0, 400, 300]
+
+        group = {
+            "id": new_id,
+            "title": title,
+            "bounding": bounding,
+            "color": color,
+            "font_size": font_size,
+            "flags": {},
+        }
+        groups.append(group)
+        return group
+
+    def remove_group(self, title_or_id: Any) -> None:
+        """Remove a group by title or ID."""
+        groups = self._flow.get("groups", [])
+        for i, g in enumerate(groups):
+            if g.get("title") == title_or_id or g.get("id") == title_or_id:
+                groups.pop(i)
+                return
+        raise ValueError(f"Group '{title_or_id}' not found.")
+
+    # ------------------------------------------------------------------
+    # Canvas viewport (zoom/pan state)
+    # ------------------------------------------------------------------
+
+    @property
+    def canvas_scale(self) -> float:
+        """Canvas zoom level."""
+        return self._flow.get("extra", {}).get("ds", {}).get("scale", 1.0)
+
+    @canvas_scale.setter
+    def canvas_scale(self, value: float) -> None:
+        extra = self._flow.setdefault("extra", {})
+        ds = extra.setdefault("ds", {})
+        ds["scale"] = value
+
+    @property
+    def canvas_offset(self) -> tuple:
+        """Canvas pan offset as ``(x, y)``."""
+        off = self._flow.get("extra", {}).get("ds", {}).get("offset", [0, 0])
+        return tuple(off)
+
+    @canvas_offset.setter
+    def canvas_offset(self, value: tuple) -> None:
+        extra = self._flow.setdefault("extra", {})
+        ds = extra.setdefault("ds", {})
+        ds["offset"] = list(value)
+
+    # ------------------------------------------------------------------
+    # Extra metadata
+    # ------------------------------------------------------------------
+
+    @property
+    def extra(self) -> Dict[str, Any]:
+        """Flow-level extra metadata dict (frontend version, extensions, etc.)."""
+        return self._flow.setdefault("extra", {})
+
+    # ------------------------------------------------------------------
+    # Execution order
+    # ------------------------------------------------------------------
+
+    def compute_order(self) -> None:
+        """Compute and set topological execution order for all nodes."""
+        nodes = self._flow.get("nodes", [])
+        links = self._flow.get("links", [])
+        if not nodes:
+            return
+
+        preds: Dict[int, set] = {n["id"]: set() for n in nodes if "id" in n}
+        for lnk in links:
+            if isinstance(lnk, list) and len(lnk) >= 4:
+                src_id, dst_id = lnk[1], lnk[3]
+                if dst_id in preds:
+                    preds[dst_id].add(src_id)
+
+        depth: Dict[int, int] = {}
+        for nid in preds:
+            depth[nid] = 0
+        changed = True
+        while changed:
+            changed = False
+            for nid, pred_ids in preds.items():
+                for pid in pred_ids:
+                    if pid in depth and depth[pid] + 1 > depth.get(nid, 0):
+                        depth[nid] = depth[pid] + 1
+                        changed = True
+
+        # Sort nodes by depth and assign order
+        sorted_nodes = sorted(nodes, key=lambda n: depth.get(n.get("id", 0), 0))
+        for i, n in enumerate(sorted_nodes):
+            n["order"] = i
+
     def connect(
         self,
         src: Any,
@@ -2026,6 +2178,11 @@ class NodeRef:
         if name in ("_meta", "meta"):
             self._data_ref()["_meta"] = value
             return
+        # Route property descriptors (bypass, mute, mode, color, etc.)
+        prop = getattr(type(self), name, None)
+        if isinstance(prop, property) and prop.fset is not None:
+            prop.fset(self, value)
+            return
         return setattr(self._p, name, value)
 
     # mapping protocol (so dict(node) works)
@@ -2059,7 +2216,9 @@ class NodeRef:
                 "type", "title", "where", "meta",
                 "inputs", "outputs", "to_input", "to_attr",
                 "remove", "delete",
-                "connect", "disconnect", "connections", "downstream"}
+                "connect", "disconnect", "connections", "downstream",
+                "bypass", "mute", "mode", "color", "bgcolor",
+                "collapsed", "pos", "size"}
         # Add widget names (these are readable/writable attributes)
         try:
             base.update(self._widget_dict().keys())
@@ -2112,6 +2271,114 @@ class NodeRef:
             return {n: getattr(self._p, n, None) for n in names}
         except Exception:
             return {}
+
+    # ------------------------------------------------------------------
+    # GUI properties (1:1 with ComfyUI frontend)
+    # ------------------------------------------------------------------
+
+    def _node_dict_rw(self) -> Dict[str, Any]:
+        """Return the raw node dict for direct property access."""
+        flow = object.__getattribute__(self, "_flow")
+        if flow is not None:
+            return self._find_node_dict(flow._flow)
+        return self._p._get_data() if hasattr(self._p, "_get_data") else {}
+
+    @property
+    def mode(self) -> int:
+        """LiteGraph node mode: 0=active, 2=muted, 4=bypassed."""
+        return self._node_dict_rw().get("mode", 0)
+
+    @mode.setter
+    def mode(self, value: int) -> None:
+        self._node_dict_rw()["mode"] = value
+
+    @property
+    def bypass(self) -> bool:
+        """True when the node is bypassed (mode 4). Bypassed nodes pass data through."""
+        return self.mode == 4
+
+    @bypass.setter
+    def bypass(self, value: bool) -> None:
+        self._node_dict_rw()["mode"] = 4 if value else 0
+
+    @property
+    def mute(self) -> bool:
+        """True when the node is muted (mode 2). Muted nodes produce no output."""
+        return self.mode == 2
+
+    @mute.setter
+    def mute(self, value: bool) -> None:
+        self._node_dict_rw()["mode"] = 2 if value else 0
+
+    @property
+    def color(self) -> Optional[str]:
+        """Node title-bar color (hex string, e.g. ``'#232'``)."""
+        return self._node_dict_rw().get("color")
+
+    @color.setter
+    def color(self, value: Optional[str]) -> None:
+        nd = self._node_dict_rw()
+        if value is None:
+            nd.pop("color", None)
+        else:
+            nd["color"] = value
+
+    @property
+    def bgcolor(self) -> Optional[str]:
+        """Node body background color (hex string, e.g. ``'#353'``)."""
+        return self._node_dict_rw().get("bgcolor")
+
+    @bgcolor.setter
+    def bgcolor(self, value: Optional[str]) -> None:
+        nd = self._node_dict_rw()
+        if value is None:
+            nd.pop("bgcolor", None)
+        else:
+            nd["bgcolor"] = value
+
+    @property
+    def title(self) -> str:
+        """Display title (user-editable label). Falls back to node type if unset."""
+        nd = self._node_dict_rw()
+        return nd.get("title", nd.get("type", ""))
+
+    @title.setter
+    def title(self, value: str) -> None:
+        self._node_dict_rw()["title"] = value
+
+    @property
+    def collapsed(self) -> bool:
+        """True when the node is visually collapsed/minimized."""
+        return self._node_dict_rw().get("flags", {}).get("collapsed", False)
+
+    @collapsed.setter
+    def collapsed(self, value: bool) -> None:
+        nd = self._node_dict_rw()
+        flags = nd.setdefault("flags", {})
+        if value:
+            flags["collapsed"] = True
+        else:
+            flags.pop("collapsed", None)
+
+    @property
+    def pos(self) -> tuple:
+        """Node position as ``(x, y)``."""
+        p = self._node_dict_rw().get("pos", [0, 0])
+        return tuple(p)
+
+    @pos.setter
+    def pos(self, value: tuple) -> None:
+        self._node_dict_rw()["pos"] = list(value)
+
+    @property
+    def size(self) -> tuple:
+        """Node size as ``(width, height)``."""
+        s = self._node_dict_rw().get("size", [0, 0])
+        return tuple(s)
+
+    @size.setter
+    def size(self, value: tuple) -> None:
+        self._node_dict_rw()["size"] = list(value)
 
     # ------------------------------------------------------------------
     # Attr ↔ Input promotion (widget-to-slot conversion)
