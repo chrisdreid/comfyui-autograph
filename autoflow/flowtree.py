@@ -197,16 +197,23 @@ class _MappingWrapper(MutableMapping):
                 return tj()
         return json.dumps(self._data, indent=indent, ensure_ascii=ensure_ascii) + "\n"
 
-    def save(self, output_path: Union[str, Path], *, indent: int = DEFAULT_JSON_INDENT, ensure_ascii: bool = DEFAULT_JSON_ENSURE_ASCII) -> Path:
+    def save(self, output_path: Union[str, Path, None] = None, *, indent: int = DEFAULT_JSON_INDENT, ensure_ascii: bool = DEFAULT_JSON_ENSURE_ASCII) -> Path:
+        if output_path is None:
+            output_path = getattr(self, "_filepath", None)
+            if output_path is None:
+                raise ValueError("No file path known — pass output_path or load/save once first.")
         sv = getattr(self._data, "save", None)
         if callable(sv):
             try:
-                return sv(output_path, indent=indent, ensure_ascii=ensure_ascii)
+                result = sv(output_path, indent=indent, ensure_ascii=ensure_ascii)
             except TypeError:
-                return sv(output_path)
+                result = sv(output_path)
+            self._filepath = Path(output_path)
+            return result
         p = Path(output_path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(self.to_json(indent=indent, ensure_ascii=ensure_ascii), encoding="utf-8")
+        self._filepath = p
         return p
 
     # MutableMapping protocol
@@ -408,9 +415,31 @@ class Flow(_MappingWrapper):
                 if isinstance(s, str) and s:
                     setattr(oi_obj, "_autoflow_source", s)
                 kwargs["node_info"] = oi_obj
+        # When no flow data is provided, inject a builder skeleton so
+        # add_node() / connect() / >> / save() all work out of the box.
+        if x is None:
+            x = {
+                "last_node_id": 0,
+                "last_link_id": 0,
+                "nodes": [],
+                "links": [],
+                "groups": [],
+                "config": {},
+                "extra": {},
+                "version": 0.4,
+            }
         f = x if isinstance(x, _legacy.Flow) else _legacy.Flow(x, **kwargs)
         self._flow = f
         self._data = f
+        # Track file path for save() with no args
+        if isinstance(x, (str, Path)):
+            xp = Path(x)
+            if xp.exists() and xp.is_file():
+                self._filepath = xp.resolve()
+            else:
+                self._filepath = None
+        else:
+            self._filepath = None
         # Warn if node_info could not be resolved.
         if getattr(f, "node_info", None) is None:
             warnings.warn(
@@ -457,7 +486,34 @@ class Flow(_MappingWrapper):
     def convert_with_errors(self, *args: Any, **kwargs: Any):
         return self._flow.convert_with_errors(*args, **kwargs)
 
-    def submit(self, *args: Any, **kwargs: Any):
+    def submit(self, *args: Any, embed_workflow: bool = True, **kwargs: Any):
+        """Submit this flow to ComfyUI for rendering.
+
+        By default, embeds the workspace workflow in extra_pnginfo so
+        ComfyUI stores it in output PNG metadata.
+
+        Args:
+            embed_workflow: If True (default), inject the workspace JSON into
+                extra_data.extra_pnginfo.workflow so ComfyUI embeds it in
+                output PNGs. Same data as flow.save() would write.
+        """
+        if embed_workflow:
+            import json as _json
+            # Use the same serialization path as flow.save() — to_json() handles
+            # custom types (WidgetValue, etc.) properly via the Workflow encoder.
+            raw_json = self._flow.to_json(indent=None)
+            flow_dict = _json.loads(raw_json)
+            # Strip internal-only keys that aren't part of the workflow file
+            flow_dict.pop("node_info", None)
+
+            extra = kwargs.get("extra") or {}
+            extra_data = extra.get("extra_data") or {}
+            pnginfo = extra_data.get("extra_pnginfo") or {}
+            pnginfo["workflow"] = flow_dict
+            extra_data["extra_pnginfo"] = pnginfo
+            extra["extra_data"] = extra_data
+            kwargs["extra"] = extra
+
         return self._flow.submit(*args, **kwargs)
 
     def execute(
@@ -513,6 +569,577 @@ class Flow(_MappingWrapper):
     def dag(self):
         # Delegate to legacy models.Flow implementation
         return getattr(self._flow, "dag")
+
+    # ------------------------------------------------------------------
+    # Builder API
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        node_info: Optional[Any] = None,
+    ) -> "Flow":
+        """Create a new, empty Flow for building workflows from scratch.
+
+        Args:
+            node_info: NodeInfo, dict, file path, or 'fetch' token.
+                       Required for add_node() to work.
+
+        Returns:
+            Empty Flow ready for add_node() / connect() calls.
+        """
+        skeleton = {
+            "last_node_id": 0,
+            "last_link_id": 0,
+            "nodes": [],
+            "links": [],
+            "groups": [],
+            "config": {},
+            "extra": {},
+            "version": 0.4,
+        }
+        # Unwrap flowtree NodeInfo to legacy for _from_raw().
+        oi_for_legacy = None
+        if isinstance(node_info, NodeInfo):
+            oi_for_legacy = node_info._oi
+        elif node_info is not None:
+            oi_for_legacy = node_info
+
+        legacy_flow = _legacy.Flow._from_raw(skeleton, node_info=oi_for_legacy)
+        inst = cls.__new__(cls)
+        inst._flow = legacy_flow
+        inst._data = legacy_flow
+        return inst
+
+    def add_node(
+        self,
+        class_type: str,
+        **widget_overrides: Any,
+    ) -> "NodeRef":
+        """Add a new node to this flow.
+
+        Uses node_info to build input slots, output slots, and widgets_values.
+        Widget defaults come from node_info; pass overrides as keyword args.
+
+        Args:
+            class_type: Node class type (e.g. 'KSampler').
+            **widget_overrides: Widget values to override defaults.
+
+        Returns:
+            A NodeRef wrapping the new node, with connect() / disconnect() support.
+
+        Raises:
+            ValueError: If node_info is not available or class_type unknown.
+        """
+        from .connection import (
+            get_connection_input_names,
+            get_output_slots,
+            get_all_input_names,
+            get_input_default,
+            _is_connection_only_input,
+        )
+        from .convert import get_widget_input_names
+
+        ni = getattr(self._flow, "node_info", None)
+        if ni is None:
+            raise ValueError(
+                "Flow has no node_info — pass node_info= to Flow.create() first."
+            )
+        # Deep-unwrap any DictView/ListView wrappers from NodeInfo to plain
+        # dicts/lists so isinstance checks work correctly.
+        import json as _json
+        ni_dict = _json.loads(_json.dumps(dict(ni)))
+
+        if class_type not in ni_dict:
+            # Accept spec objects from ni.CLIPTextEncode or ni.find()
+            addr = getattr(class_type, "_autoflow_addr", None)
+            if addr and addr in ni_dict:
+                class_type = addr
+            elif isinstance(class_type, str):
+                raise ValueError(
+                    f"Unknown node class '{class_type}'. Not found in node_info."
+                )
+            else:
+                raise ValueError(
+                    "Could not determine class_type from the provided object. "
+                    "Use ni.CLIPTextEncode (dot access on NodeInfo), ni.find(), "
+                    "or pass the string name directly."
+                )
+        type_info = ni_dict[class_type]
+
+        # ---- Build input slots (connection-only inputs) ----
+        conn_inputs = get_connection_input_names(class_type, ni_dict)
+        input_slots = []
+        for name in conn_inputs:
+            # Determine the type from node_info
+            spec = None
+            inputs_def = type_info.get("input", {})
+            for section in ["required", "optional"]:
+                section_inputs = inputs_def.get(section, {})
+                if isinstance(section_inputs, dict) and name in section_inputs:
+                    spec = section_inputs[name]
+                    break
+            slot_type = spec[0] if spec and isinstance(spec[0], str) else "*"
+            input_slots.append({"name": name, "type": slot_type, "link": None})
+
+        # ---- Build output slots ----
+        out_slots_info = get_output_slots(class_type, ni_dict)
+        output_slots = []
+        for idx, name, out_type in out_slots_info:
+            output_slots.append(
+                {"name": name, "type": out_type, "slot_index": idx, "links": []}
+            )
+
+        # ---- Build widgets_values ----
+        # ComfyUI's frontend injects extra widgets for certain flags in the
+        # widget options dict (e.g. "control_after_generate": True adds a combo
+        # widget right after the INT widget). We must replicate this so the
+        # positional widgets_values array stays aligned.
+        widget_names = get_widget_input_names(class_type, ni_dict, use_api=True)
+        widgets_values = []
+        inputs_def = type_info.get("input", {})
+        for wname in widget_names:
+            if wname in widget_overrides:
+                widgets_values.append(widget_overrides[wname])
+            else:
+                default = get_input_default(class_type, wname, ni_dict)
+                widgets_values.append(default)
+
+            # Check for frontend-injected follow-up widgets
+            spec = None
+            for section in ["required", "optional"]:
+                section_inputs = inputs_def.get(section, {})
+                if isinstance(section_inputs, dict) and wname in section_inputs:
+                    spec = section_inputs[wname]
+                    break
+            if spec and isinstance(spec, list) and len(spec) >= 2 and isinstance(spec[1], dict):
+                opts = spec[1]
+                # "control_after_generate": True → ComfyUI injects a combo
+                # widget with choices ["fixed","increment","decrement","randomize"]
+                if opts.get("control_after_generate"):
+                    cag_key = "control_after_generate"
+                    if cag_key in widget_overrides:
+                        widgets_values.append(widget_overrides[cag_key])
+                    else:
+                        widgets_values.append("randomize")
+
+        # ---- Assign ID and position ----
+        last_id = self._flow.get("last_node_id", 0)
+        new_id = last_id + 1
+        self._flow["last_node_id"] = new_id
+
+        node_count = len(self._flow.get("nodes", []))
+        col = node_count % 4
+        row = node_count // 4
+        pos = [col * 400, row * 300]
+
+        # ---- Build the node dict ----
+        node_dict = {
+            "id": new_id,
+            "type": class_type,
+            "pos": pos,
+            "size": [315, 170],
+            "flags": {},
+            "order": node_count,
+            "mode": 0,
+            "inputs": input_slots,
+            "outputs": output_slots,
+            "properties": {"Node name for S&R": class_type},
+            "widgets_values": widgets_values,
+        }
+
+        self._flow.setdefault("nodes", []).append(node_dict)
+
+        # Invalidate DAG cache if present
+        try:
+            object.__delattr__(self._flow, "_autoflow_dag_cache")
+        except (AttributeError, TypeError):
+            pass
+
+        # Build a NodeRef for chaining
+        proxy = _legacy.FlowNodeProxy(node_dict, len(self._flow["nodes"]) - 1, self._flow)
+        return NodeRef(
+            proxy,
+            kind="flow",
+            addr=str(new_id),
+            group=class_type,
+            index=0,
+            dotpath=f"nodes.{class_type}[0]",
+            dictpath=["nodes", len(self._flow["nodes"]) - 1],
+            flow=self,
+        )
+
+    def remove_node(
+        self,
+        node: Any,
+    ) -> None:
+        """Remove a node and all its connections from the flow.
+
+        Args:
+            node: A NodeRef, node ID (int), or node dict.
+        """
+        # Resolve node ID
+        if isinstance(node, NodeRef):
+            node_id = int(node.addr)
+        elif isinstance(node, int):
+            node_id = node
+        elif isinstance(node, dict):
+            node_id = node.get("id")
+        else:
+            node_id = int(node)
+
+        nodes = self._flow.get("nodes", [])
+        links = self._flow.get("links", [])
+
+        # Find and remove the node
+        node_idx = None
+        for i, n in enumerate(nodes):
+            if n.get("id") == node_id:
+                node_idx = i
+                break
+        if node_idx is None:
+            raise ValueError(f"Node {node_id} not found in flow")
+
+        removed_node = nodes[node_idx]
+
+        # Collect all link IDs touching this node
+        link_ids_to_remove = set()
+        for inp in removed_node.get("inputs", []):
+            lid = inp.get("link")
+            if lid is not None:
+                link_ids_to_remove.add(lid)
+        for outp in removed_node.get("outputs", []):
+            for lid in outp.get("links", []):
+                link_ids_to_remove.add(lid)
+
+        # Clean up references in other nodes
+        for link_id in link_ids_to_remove:
+            for n in nodes:
+                if n.get("id") == node_id:
+                    continue
+                for inp in n.get("inputs", []):
+                    if inp.get("link") == link_id:
+                        inp["link"] = None
+                for outp in n.get("outputs", []):
+                    out_links = outp.get("links", [])
+                    if link_id in out_links:
+                        out_links.remove(link_id)
+
+        # Remove links from the link table
+        self._flow["links"] = [
+            lnk for lnk in links
+            if not (isinstance(lnk, list) and len(lnk) >= 1 and lnk[0] in link_ids_to_remove)
+        ]
+
+        # Remove the node
+        nodes.pop(node_idx)
+
+        # Invalidate DAG cache
+        try:
+            object.__delattr__(self._flow, "_autoflow_dag_cache")
+        except (AttributeError, TypeError):
+            pass
+
+    def auto_layout(
+        self,
+        spacing_x: int = 400,
+        spacing_y: int = 300,
+    ) -> None:
+        """Automatically position nodes left-to-right by topological depth.
+
+        Uses the flow's link table to determine DAG order, then assigns
+        positions based on each node's depth (column) and row within
+        that depth level.
+
+        Args:
+            spacing_x: Horizontal spacing between depth columns (pixels).
+            spacing_y: Vertical spacing between nodes in the same column.
+        """
+        nodes = self._flow.get("nodes", [])
+        links = self._flow.get("links", [])
+        if not nodes:
+            return
+
+        # Build adjacency: node_id → set of predecessor node_ids
+        preds: Dict[int, set] = {n["id"]: set() for n in nodes if "id" in n}
+        for lnk in links:
+            if isinstance(lnk, list) and len(lnk) >= 4:
+                src_id, dst_id = lnk[1], lnk[3]
+                if dst_id in preds:
+                    preds[dst_id].add(src_id)
+
+        # Simple iterative toposort to compute depth
+        depth: Dict[int, int] = {}
+        changed = True
+        for nid in preds:
+            depth[nid] = 0
+        while changed:
+            changed = False
+            for nid, pred_ids in preds.items():
+                for pid in pred_ids:
+                    if pid in depth and depth[pid] + 1 > depth.get(nid, 0):
+                        depth[nid] = depth[pid] + 1
+                        changed = True
+
+        # Group nodes by depth
+        depth_groups: Dict[int, list] = {}
+        for n in nodes:
+            nid = n.get("id")
+            d = depth.get(nid, 0)
+            depth_groups.setdefault(d, []).append(n)
+
+        # Assign positions
+        for d, group in sorted(depth_groups.items()):
+            for row, n in enumerate(group):
+                n["pos"] = [d * spacing_x, row * spacing_y]
+
+    # ------------------------------------------------------------------
+    # Groups (visual containers — no execution impact)
+    # ------------------------------------------------------------------
+
+    @property
+    def groups(self) -> List[Dict[str, Any]]:
+        """List of visual groups in the flow."""
+        return self._flow.get("groups", [])
+
+    def add_group(
+        self,
+        title: str,
+        *,
+        color: str = "#3f789e",
+        font_size: int = 24,
+        bounding: Optional[List[float]] = None,
+        nodes: Optional[List[Any]] = None,
+    ) -> Dict[str, Any]:
+        """Add a visual group to the flow.
+
+        Args:
+            title: Display title for the group.
+            color: Group color (hex string).
+            font_size: Title font size.
+            bounding: Manual ``[x, y, w, h]`` bounding box.
+            nodes: Optional list of NodeRefs to auto-compute bounding from.
+
+        Returns:
+            The created group dict.
+        """
+        groups = self._flow.setdefault("groups", [])
+        # Auto-compute next ID
+        max_id = max((g.get("id", 0) for g in groups), default=0)
+        new_id = max_id + 1
+
+        # Auto-compute bounding from nodes if provided
+        if bounding is None and nodes:
+            padding = 60
+            xs, ys, x2s, y2s = [], [], [], []
+            for node in nodes:
+                if isinstance(node, NodeRef):
+                    nd = node._find_node_dict(self._flow)
+                else:
+                    nd = node
+                p = nd.get("pos", [0, 0])
+                s = nd.get("size", [300, 200])
+                xs.append(p[0])
+                ys.append(p[1])
+                x2s.append(p[0] + s[0])
+                y2s.append(p[1] + s[1])
+            if xs:
+                bounding = [
+                    min(xs) - padding,
+                    min(ys) - padding - 30,  # extra for title bar
+                    max(x2s) - min(xs) + 2 * padding,
+                    max(y2s) - min(ys) + 2 * padding + 30,
+                ]
+
+        if bounding is None:
+            bounding = [0, 0, 400, 300]
+
+        group = {
+            "id": new_id,
+            "title": title,
+            "bounding": bounding,
+            "color": color,
+            "font_size": font_size,
+            "flags": {},
+        }
+        groups.append(group)
+        return group
+
+    def remove_group(self, title_or_id: Any) -> None:
+        """Remove a group by title or ID."""
+        groups = self._flow.get("groups", [])
+        for i, g in enumerate(groups):
+            if g.get("title") == title_or_id or g.get("id") == title_or_id:
+                groups.pop(i)
+                return
+        raise ValueError(f"Group '{title_or_id}' not found.")
+
+    # ------------------------------------------------------------------
+    # Canvas viewport (zoom/pan state)
+    # ------------------------------------------------------------------
+
+    @property
+    def canvas_scale(self) -> float:
+        """Canvas zoom level."""
+        return self._flow.get("extra", {}).get("ds", {}).get("scale", 1.0)
+
+    @canvas_scale.setter
+    def canvas_scale(self, value: float) -> None:
+        extra = self._flow.setdefault("extra", {})
+        ds = extra.setdefault("ds", {})
+        ds["scale"] = value
+
+    @property
+    def canvas_offset(self) -> tuple:
+        """Canvas pan offset as ``(x, y)``."""
+        off = self._flow.get("extra", {}).get("ds", {}).get("offset", [0, 0])
+        return tuple(off)
+
+    @canvas_offset.setter
+    def canvas_offset(self, value: tuple) -> None:
+        extra = self._flow.setdefault("extra", {})
+        ds = extra.setdefault("ds", {})
+        ds["offset"] = list(value)
+
+
+    # Note: flow.extra already falls through to the Workflow layer which
+    # returns a DictView with dot-access support (e.g., flow.extra.ds).
+
+    # ------------------------------------------------------------------
+    # Execution order
+    # ------------------------------------------------------------------
+
+    def compute_order(self) -> None:
+        """Compute and set topological execution order for all nodes."""
+        nodes = self._flow.get("nodes", [])
+        links = self._flow.get("links", [])
+        if not nodes:
+            return
+
+        preds: Dict[int, set] = {n["id"]: set() for n in nodes if "id" in n}
+        for lnk in links:
+            if isinstance(lnk, list) and len(lnk) >= 4:
+                src_id, dst_id = lnk[1], lnk[3]
+                if dst_id in preds:
+                    preds[dst_id].add(src_id)
+
+        depth: Dict[int, int] = {}
+        for nid in preds:
+            depth[nid] = 0
+        changed = True
+        while changed:
+            changed = False
+            for nid, pred_ids in preds.items():
+                for pid in pred_ids:
+                    if pid in depth and depth[pid] + 1 > depth.get(nid, 0):
+                        depth[nid] = depth[pid] + 1
+                        changed = True
+
+        # Sort nodes by depth and assign order
+        sorted_nodes = sorted(nodes, key=lambda n: depth.get(n.get("id", 0), 0))
+        for i, n in enumerate(sorted_nodes):
+            n["order"] = i
+
+    def connect(
+        self,
+        src: Any,
+        dst: Any,
+    ) -> None:
+        """Connect nodes using SlotRef objects, path strings, or a mix.
+
+        Args:
+            src: Source — a SlotRef (from node.outputs.X) or path string "NodeType/OutputName".
+            dst: Destination — a SlotRef (from node.inputs.X), a path string,
+                 or a list of SlotRefs/paths for fan-out.
+
+        Examples:
+            # SlotRef objects (from node.inputs / node.outputs)
+            flow.connect(ckpt.outputs.MODEL, ks.inputs.model)
+            flow.connect(ckpt.outputs.CLIP, [pos.inputs.clip, neg.inputs.clip])
+
+            # Path strings
+            flow.connect("CheckpointLoader/MODEL", "KSampler/model")
+
+            # Mix
+            flow.connect(ckpt.outputs.MODEL, "KSampler/model")
+        """
+        # Fan-out: if dst is a list, connect src to each
+        if isinstance(dst, (list, tuple)):
+            for d in dst:
+                self.connect(src, d)
+            return
+
+        # Resolve src
+        if isinstance(src, SlotRef):
+            src_node = src.node
+            output_name = src.name
+            # Ensure _flow is set
+            object.__setattr__(src_node, "_flow", self)
+        elif isinstance(src, str):
+            src_node, output_name = self._resolve_connect_path(src)
+        else:
+            raise TypeError(
+                f"src must be a SlotRef or path string, got {type(src).__name__}. "
+                f"Use: flow.connect(node.outputs.X, ...) or flow.connect('Type/Output', ...)"
+            )
+
+        # Resolve dst
+        if isinstance(dst, SlotRef):
+            dst_node = dst.node
+            input_name = dst.name
+            object.__setattr__(dst_node, "_flow", self)
+        elif isinstance(dst, str):
+            dst_node, input_name = self._resolve_connect_path(dst)
+        else:
+            raise TypeError(
+                f"dst must be a SlotRef or path string, got {type(dst).__name__}. "
+                f"Use: flow.connect(..., node.inputs.Y) or flow.connect(..., 'Type/input')"
+            )
+
+        dst_node.connect(input_name, src_node, output_name)
+
+    def _resolve_connect_path(self, path: str):
+        """Resolve 'NodeType/SlotName' or 'NodeType[index]/SlotName' to (NodeRef, slot_name)."""
+        parts = path.split("/", 1)
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid path '{path}'. Expected 'NodeType/SlotName' "
+                f"(e.g. 'KSampler/model')."
+            )
+        type_part, slot_name = parts
+
+        # Parse optional index: "KSampler[0]" → ("KSampler", 0)
+        idx = None
+        if "[" in type_part and type_part.endswith("]"):
+            bracket_pos = type_part.index("[")
+            idx_str = type_part[bracket_pos + 1:-1]
+            type_part = type_part[:bracket_pos]
+            try:
+                idx = int(idx_str)
+            except ValueError:
+                raise ValueError(f"Invalid index in '{path}': '{idx_str}'")
+
+        matches = self.find(type=type_part)
+        if not matches:
+            raise ValueError(f"No node of type '{type_part}' found in flow.")
+        if idx is not None:
+            if idx >= len(matches):
+                raise ValueError(
+                    f"Index {idx} out of range for '{type_part}' "
+                    f"(found {len(matches)} nodes)."
+                )
+            node = matches[idx]
+        elif len(matches) == 1:
+            node = matches[0]
+        else:
+            raise ValueError(
+                f"Ambiguous: {len(matches)} nodes of type '{type_part}'. "
+                f"Use '{type_part}[0]/...' to disambiguate."
+            )
+        # Ensure _flow is set
+        object.__setattr__(node, "_flow", self)
+        return node, slot_name
 
 
 class NodeInfo(_MappingWrapper):
@@ -641,7 +1268,24 @@ class NodeInfo(_MappingWrapper):
         return getattr(self._oi, "source", None)
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._oi, name)
+        result = getattr(self._oi, name)
+        # Tag DictView results with the class_type so add_node() can resolve them
+        if isinstance(result, _legacy.DictView) and name in self._oi:
+            try:
+                object.__setattr__(result, "_autoflow_addr", name)
+            except (AttributeError, TypeError):
+                pass
+        return result
+
+    def __dir__(self) -> list:
+        """List all class_type names for tab completion."""
+        base = {"find", "fetch", "source", "load", "from_comfyui_modules",
+                "to_json", "keys", "values", "items", "get"}
+        try:
+            base.update(str(k) for k in self._oi.keys())
+        except Exception:
+            pass
+        return sorted(base)
 
     def __repr__(self) -> str:
         count = len(self._oi)
@@ -691,12 +1335,698 @@ class _CallableList(list):
         return self
 
 
+def _wrap_attr_value(value: Any, node: "NodeRef", name: str) -> Any:
+    """Wrap a widget/attr value so it retains its type but gains .to_input()/.to_attr().
+
+    Returns a subclass of the original type (int, float, str, bool) that
+    transparently behaves like the value but adds promotion methods.
+    For non-primitive types, returns the raw value unchanged.
+    """
+    base = type(value)
+    if base not in (int, float, str, bool):
+        return value
+
+    # Dynamically create a subclass with promotion methods
+    # (cached per base type to avoid class explosion)
+    cls = _ATTR_VALUE_CLASSES.get(base)
+    if cls is None:
+        class AttrValue(base):  # type: ignore[misc]
+            __slots__ = ("_node_ref", "_attr_name")
+
+            def __new__(cls, val: Any, node_ref: "NodeRef", attr_name: str) -> "AttrValue":
+                obj = super().__new__(cls, val)
+                obj._node_ref = node_ref
+                obj._attr_name = attr_name
+                return obj
+
+            def to_input(self) -> None:
+                """Promote this attr to a connectable input slot."""
+                self._node_ref.to_input(self._attr_name)
+
+            def to_attr(self) -> None:
+                """Demote the corresponding input slot back to attr-only."""
+                self._node_ref.to_attr(self._attr_name)
+
+        AttrValue.__name__ = f"AttrValue_{base.__name__}"
+        AttrValue.__qualname__ = AttrValue.__name__
+        _ATTR_VALUE_CLASSES[base] = AttrValue
+        cls = AttrValue
+
+    return cls(value, node, name)
+
+
+_ATTR_VALUE_CLASSES: Dict[type, type] = {}
+
+
+class SlotRef:
+    """Reference to a specific slot on a node, enabling the >> operator.
+
+    Created via:
+        ks.model            → SlotRef(node=ks, name="model", direction="input")
+        ks.inputs.model     → SlotRef(node=ks, name="model", direction="input")
+        ckpt.outputs.MODEL  → SlotRef(node=ckpt, name="MODEL", direction="output")
+
+    Usage with >> operator:
+        ckpt >> ks.model                            # auto-resolve (shorthand)
+        ckpt.outputs.MODEL >> ks.inputs.model       # explicit
+    """
+
+    __slots__ = ("node", "name", "direction", "slot_type")
+
+    def __init__(self, node: "NodeRef", name: str, direction: str = "input", slot_type: str = ""):
+        self.node = node
+        self.name = name
+        self.direction = direction
+        self.slot_type = slot_type
+
+    def _get_connection_info(self) -> Optional[str]:
+        """Get current connection info for this slot."""
+        try:
+            flow = object.__getattribute__(self.node, "_flow")
+            if flow is None:
+                return None
+            flow_data = flow._flow
+            node_dict = self.node._find_node_dict(flow_data)
+
+            if self.direction == "input":
+                for inp in node_dict.get("inputs", []):
+                    if inp.get("name") == self.name:
+                        link_id = inp.get("link")
+                        if link_id is not None:
+                            for lnk in flow_data.get("links", []):
+                                if lnk[0] == link_id:
+                                    src_id = lnk[1]
+                                    src_slot = lnk[2]
+                                    for n in flow_data.get("nodes", []):
+                                        if n.get("id") == src_id:
+                                            src_type = n.get("type", "?")
+                                            outputs = n.get("outputs", [])
+                                            out_name = outputs[src_slot].get("name", "?") if src_slot < len(outputs) else "?"
+                                            return f"{src_type}.{out_name}"
+                        return None
+            else:  # output
+                for outp in node_dict.get("outputs", []):
+                    if outp.get("name") == self.name:
+                        links = outp.get("links", [])
+                        if links:
+                            targets = []
+                            for link_id in links:
+                                for lnk in flow_data.get("links", []):
+                                    if lnk[0] == link_id:
+                                        dst_id = lnk[3]
+                                        for n in flow_data.get("nodes", []):
+                                            if n.get("id") == dst_id:
+                                                dst_type = n.get("type", "?")
+                                                dst_inputs = n.get("inputs", [])
+                                                dst_name = dst_inputs[lnk[4]].get("name", "?") if lnk[4] < len(dst_inputs) else "?"
+                                                targets.append(f"{dst_type}.{dst_name}")
+                            return ", ".join(targets) if targets else None
+                        return None
+        except Exception:
+            return None
+
+    def __repr__(self) -> str:
+        import sys
+        use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+        conn = self._get_connection_info()
+
+        type_str = f" [{self.slot_type}]" if self.slot_type else ""
+        if self.direction == "input":
+            if conn:
+                status = f"\033[32m← {conn}\033[0m" if use_color else f"← {conn}"
+            else:
+                status = "\033[90m(unconnected)\033[0m" if use_color else "(unconnected)"
+            return f"SlotRef({self.node.type}.{self.name}{type_str} {status})"
+        else:
+            if conn:
+                status = f"\033[32m→ {conn}\033[0m" if use_color else f"→ {conn}"
+            else:
+                status = "\033[90m(unconnected)\033[0m" if use_color else "(unconnected)"
+            return f"SlotRef({self.node.type}.{self.name}{type_str} {status})"
+
+    def __rrshift__(self, src_node: "NodeRef") -> None:
+        """Handle: src_node >> this_input_slot (auto-resolve output)."""
+        if self.direction == "input":
+            self.node.connect(self.name, src_node)
+        else:
+            raise TypeError(
+                f"Cannot use >> to push into an output slot. "
+                f"Use: source >> destination.inputs.{self.name}"
+            )
+
+    def __rshift__(self, other: Any) -> None:
+        """Handle: this_output_slot >> other_input_slot (or list for fan-out).
+
+        Special: output >> None disconnects all links from this output.
+        """
+        if self.direction != "output":
+            raise TypeError(
+                f"Left side of >> must be an output slot, got input '{self.name}'. "
+                f"Use: node.outputs.X >> other.inputs.Y"
+            )
+        # Disconnect: output >> None
+        if other is None:
+            self.disconnect()
+            return
+        # Fan-out: output >> [input1, input2, ...]
+        if isinstance(other, (list, tuple)):
+            for slot in other:
+                if not isinstance(slot, SlotRef) or slot.direction != "input":
+                    raise TypeError(
+                        f"Each item in the list must be an input SlotRef, got {type(slot).__name__}."
+                    )
+                slot.node.connect(slot.name, self.node, self.name)
+            return
+        if not isinstance(other, SlotRef) or other.direction != "input":
+            raise TypeError(
+                f"Right side of >> must be an input slot, list, or None. "
+                f"Use: node.outputs.X >> other.inputs.Y"
+            )
+        other.node.connect(other.name, self.node, self.name)
+
+    def __lshift__(self, src: Any) -> None:
+        """Handle: this_input_slot << source (pull-style connection).
+
+        Special: input << None disconnects this input.
+
+        Examples:
+            ks.inputs.model << ckpt                  # auto-resolve output
+            ks.inputs.model << ckpt.outputs.MODEL    # explicit output
+            ks.inputs.model << None                  # disconnect
+        """
+        if self.direction != "input":
+            raise TypeError(
+                f"Left side of << must be an input slot, got output '{self.name}'. "
+                f"Use: node.inputs.X << source"
+            )
+        # Disconnect: input << None
+        if src is None:
+            self.disconnect()
+            return
+        if isinstance(src, SlotRef):
+            if src.direction != "output":
+                raise TypeError(
+                    f"Right side of << must be a node, output slot, or None. "
+                    f"Got input '{src.name}'."
+                )
+            self.node.connect(self.name, src.node, src.name)
+        elif isinstance(src, NodeRef):
+            self.node.connect(self.name, src)
+        else:
+            raise TypeError(
+                f"Right side of << must be a node, output SlotRef, or None. "
+                f"Got {type(src).__name__}."
+            )
+
+    def connect(self, targets: Any) -> "SlotRef":
+        """Connect this output slot to one or more input slots.
+
+        Args:
+            targets: A single input SlotRef or a list of input SlotRefs.
+
+        Examples:
+            ckpt.outputs.CLIP.connect(pos.inputs.clip)
+            ckpt.outputs.CLIP.connect([pos.inputs.clip, neg.inputs.clip])
+
+        Returns self for chaining.
+        """
+        if self.direction != "output":
+            raise TypeError(
+                f"connect() is for output slots. "
+                f"For input slots, use: other_node >> this_node.inputs.{self.name}"
+            )
+        if isinstance(targets, (list, tuple)):
+            for t in targets:
+                if not isinstance(t, SlotRef) or t.direction != "input":
+                    raise TypeError(f"Each target must be an input SlotRef, got {type(t).__name__}.")
+                t.node.connect(t.name, self.node, self.name)
+        elif isinstance(targets, SlotRef) and targets.direction == "input":
+            targets.node.connect(targets.name, self.node, self.name)
+        else:
+            raise TypeError(
+                f"targets must be an input SlotRef or list of input SlotRefs. "
+                f"Use: node.outputs.X.connect(other.inputs.Y)"
+            )
+        return self
+
+    def disconnect(self, target: Optional["SlotRef"] = None) -> None:
+        """Disconnect this slot.
+
+        For input slots:
+            slot.disconnect()  — removes the one incoming connection.
+
+        For output slots:
+            slot.disconnect()             — removes ALL outgoing connections.
+            slot.disconnect(ks.inputs.model) — removes only the link to that input.
+
+        Examples:
+            ks.inputs.model.disconnect()
+            ckpt.outputs.MODEL.disconnect()
+            ckpt.outputs.MODEL.disconnect(ks.inputs.model)
+        """
+        flow = object.__getattribute__(self.node, "_flow")
+        if flow is None:
+            raise RuntimeError("SlotRef has no flow reference — cannot disconnect.")
+        flow_data = flow._flow
+        node_dict = self.node._find_node_dict(flow_data)
+
+        if self.direction == "input":
+            # Input: just delegate to NodeRef.disconnect
+            self.node.disconnect(self.name)
+            # Auto-demote if promoted attr
+            self.node._maybe_demote(self.name)
+        else:
+            # Output: find all links from this output slot
+            outputs = node_dict.get("outputs", [])
+            out_slot = None
+            out_idx = None
+            for i, outp in enumerate(outputs):
+                if outp.get("name") == self.name:
+                    out_slot = outp
+                    out_idx = i
+                    break
+            if out_slot is None:
+                return
+
+            link_ids = list(out_slot.get("links", []))
+            if not link_ids:
+                return
+
+            if target is not None:
+                # Disconnect specific target
+                if not isinstance(target, SlotRef) or target.direction != "input":
+                    raise TypeError("target must be an input SlotRef.")
+                target_dict = target.node._find_node_dict(flow_data)
+                target_id = target_dict.get("id")
+                # Find the link that connects to this specific target input
+                for link_id in link_ids:
+                    for lnk in flow_data.get("links", []):
+                        if lnk[0] == link_id and lnk[3] == target_id:
+                            # Verify input name matches
+                            dst_inputs = target_dict.get("inputs", [])
+                            if lnk[4] < len(dst_inputs) and dst_inputs[lnk[4]].get("name") == target.name:
+                                # Remove this specific link
+                                dst_inputs[lnk[4]]["link"] = None
+                                out_slot["links"].remove(link_id)
+                                flow_data["links"] = [
+                                    l for l in flow_data["links"]
+                                    if not (isinstance(l, list) and l[0] == link_id)
+                                ]
+                                return
+            else:
+                # Disconnect ALL targets from this output
+                for link_id in link_ids:
+                    for lnk in flow_data.get("links", []):
+                        if lnk[0] == link_id:
+                            dst_id = lnk[3]
+                            dst_slot_idx = lnk[4]
+                            for n in flow_data.get("nodes", []):
+                                if n.get("id") == dst_id:
+                                    dst_inputs = n.get("inputs", [])
+                                    if dst_slot_idx < len(dst_inputs):
+                                        dst_inputs[dst_slot_idx]["link"] = None
+                                    break
+                            break
+                out_slot["links"] = []
+                flow_data["links"] = [
+                    l for l in flow_data["links"]
+                    if not (isinstance(l, list) and l[0] in link_ids)
+                ]
+
+
+class _PrettyStr(str):
+    """String that renders with newlines in REPL (repr shows the formatted output)."""
+    __slots__ = ()
+    def __repr__(self) -> str:
+        return str(self)
+
+
+class InputsView:
+    """Dict-like view of a node's input slots.
+
+    Usage:
+        ks.inputs                     # concise: {model: ← Ckpt.MODEL, positive: ○}
+        ks.inputs.model               # → SlotRef (for >> and << wiring)
+        ks.inputs['model']            # → SlotRef (same)
+        ks.inputs.seed                # → auto-promotes attr to input slot, returns SlotRef
+        dict(ks.inputs)               # → {name: SlotRef, ...}
+        ks.inputs.pop('model')        # disconnect + return SlotRef
+        del ks.inputs['model']        # disconnect (auto-demotes if promoted)
+        ks.inputs.status()            # full ANSI-colored status table
+    """
+
+    __slots__ = ("_node", "_names")
+
+    def __init__(self, node: "NodeRef"):
+        self._node = node
+        self._names: List[str] = []
+        try:
+            flow = object.__getattribute__(node, "_flow")
+            if flow is not None:
+                nd = node._find_node_dict(flow._flow)
+                self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+        except Exception:
+            pass
+
+    def _make_slot(self, name: str) -> SlotRef:
+        slot_type = ""
+        try:
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is not None:
+                nd = self._node._find_node_dict(flow._flow)
+                for inp in nd.get("inputs", []):
+                    if inp.get("name") == name:
+                        slot_type = inp.get("type", "")
+                        break
+        except Exception:
+            pass
+        return SlotRef(self._node, name, direction="input", slot_type=slot_type)
+
+    def _conn_str(self, name: str) -> Optional[str]:
+        try:
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is None:
+                return None
+            fd = flow._flow
+            nd = self._node._find_node_dict(fd)
+            for inp in nd.get("inputs", []):
+                if inp.get("name") == name:
+                    lid = inp.get("link")
+                    if lid is not None:
+                        for lnk in fd.get("links", []):
+                            if lnk[0] == lid:
+                                for n in fd.get("nodes", []):
+                                    if n.get("id") == lnk[1]:
+                                        outs = n.get("outputs", [])
+                                        on = outs[lnk[2]].get("name", "?") if lnk[2] < len(outs) else "?"
+                                        return f"{n.get('type', '?')}.{on}"
+                    return None
+        except Exception:
+            return None
+
+    def _get_promotable_attrs(self) -> Dict[str, str]:
+        """Return promotable attr names → types from node_info (attrs not yet in inputs)."""
+        try:
+            from .connection import get_promotable_attr_names
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is None:
+                return {}
+            ni = getattr(flow._flow, "node_info", None)
+            if ni is None:
+                return {}
+            ct = self._node.type
+            all_promotable = get_promotable_attr_names(ct, ni)
+            # Only return attrs NOT already in current inputs
+            return {k: v for k, v in all_promotable.items() if k not in self._names}
+        except Exception:
+            return {}
+
+    def __dir__(self) -> List[str]:
+        promotable = set(self._get_promotable_attrs().keys())
+        return sorted(set(self._names) | promotable | {"status", "pop", "keys", "values", "items"})
+
+    def __getattr__(self, name: str) -> SlotRef:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name in self._names:
+            return self._make_slot(name)
+        # Check if it's a promotable attr — auto-promote
+        promotable = self._get_promotable_attrs()
+        if name in promotable:
+            self._node.to_input(name)
+            # Re-read names after promotion
+            try:
+                flow = object.__getattribute__(self._node, "_flow")
+                if flow is not None:
+                    nd = self._node._find_node_dict(flow._flow)
+                    self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+            except Exception:
+                pass
+            return self._make_slot(name)
+        raise AttributeError(f"No input '{name}' on {self._node.type}. Available: {self._names}")
+
+    def __getitem__(self, name: str) -> SlotRef:
+        if name in self._names:
+            return self._make_slot(name)
+        # Auto-promote if promotable attr
+        promotable = self._get_promotable_attrs()
+        if name in promotable:
+            self._node.to_input(name)
+            try:
+                flow = object.__getattribute__(self._node, "_flow")
+                if flow is not None:
+                    nd = self._node._find_node_dict(flow._flow)
+                    self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+            except Exception:
+                pass
+            return self._make_slot(name)
+        raise KeyError(f"No input '{name}' on {self._node.type}. Available: {self._names}")
+
+    def __delitem__(self, name: str) -> None:
+        if name not in self._names:
+            raise KeyError(f"No input '{name}' on {self._node.type}.")
+        slot = self._make_slot(name)
+        slot.disconnect()
+        # Auto-demote if it was a promoted attr
+        self._node._maybe_demote(name)
+        # Refresh names
+        try:
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is not None:
+                nd = self._node._find_node_dict(flow._flow)
+                self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+        except Exception:
+            pass
+
+    def __contains__(self, name: str) -> bool:
+        if name in self._names:
+            return True
+        # Also check promotable attrs
+        return name in self._get_promotable_attrs()
+
+    def __iter__(self):
+        return iter(self._names)
+
+    def __len__(self) -> int:
+        return len(self._names)
+
+    def keys(self) -> List[str]:
+        return list(self._names)
+
+    def values(self) -> List[SlotRef]:
+        return [self._make_slot(n) for n in self._names]
+
+    def items(self) -> List[Tuple[str, SlotRef]]:
+        return [(n, self._make_slot(n)) for n in self._names]
+
+    def pop(self, name: str) -> SlotRef:
+        """Disconnect input, auto-demote if promoted, return the SlotRef."""
+        if name not in self._names:
+            raise KeyError(f"No input '{name}' on {self._node.type}.")
+        slot = self._make_slot(name)
+        slot.disconnect()
+        # Auto-demote if it was a promoted attr
+        self._node._maybe_demote(name)
+        # Refresh names
+        try:
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is not None:
+                nd = self._node._find_node_dict(flow._flow)
+                self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+        except Exception:
+            pass
+        return slot
+
+    def __repr__(self) -> str:
+        d = {name: self._conn_str(name) for name in self._names}
+        return repr(d)
+
+    def status(self) -> str:
+        """Full ANSI-colored connection status table."""
+        import sys
+        use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+        lines = [f"{self._node.type} inputs:"]
+        try:
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is not None:
+                fd = flow._flow
+                nd = self._node._find_node_dict(fd)
+                for inp in nd.get("inputs", []):
+                    name = inp.get("name", "?")
+                    itype = inp.get("type", "?")
+                    lid = inp.get("link")
+                    if lid is not None:
+                        si = "?"
+                        for lnk in fd.get("links", []):
+                            if lnk[0] == lid:
+                                for n in fd.get("nodes", []):
+                                    if n.get("id") == lnk[1]:
+                                        outs = n.get("outputs", [])
+                                        on = outs[lnk[2]].get("name", "?") if lnk[2] < len(outs) else "?"
+                                        si = f"{n.get('type', '?')}.{on}"
+                                break
+                        if use_color:
+                            lines.append(f"  \033[32m●\033[0m {name:<20} [{itype}] \033[32m← {si}\033[0m")
+                        else:
+                            lines.append(f"  ● {name:<20} [{itype}] ← {si}")
+                    else:
+                        if use_color:
+                            lines.append(f"  \033[90m○ {name:<20} [{itype}]\033[0m")
+                        else:
+                            lines.append(f"  ○ {name:<20} [{itype}]")
+        except Exception:
+            lines.append("  (no flow data)")
+        return _PrettyStr("\n".join(lines))
+
+
+class OutputsView:
+    """Dict-like view of a node's output slots.
+
+    Usage:
+        ckpt.outputs                  # concise: {MODEL: → Ks.model, CLIP: ○}
+        ckpt.outputs.MODEL            # → SlotRef (for >> wiring)
+        ckpt.outputs['MODEL']         # → SlotRef (same)
+        dict(ckpt.outputs)            # → {name: SlotRef, ...}
+        ckpt.outputs.pop('MODEL')     # disconnect all + return SlotRef
+        del ckpt.outputs['MODEL']     # disconnect all from this output
+        ckpt.outputs.status()         # full ANSI-colored status table
+    """
+
+    __slots__ = ("_node", "_slots")
+
+    def __init__(self, node: "NodeRef"):
+        self._node = node
+        self._slots: List[Tuple[str, str]] = []
+        try:
+            flow = object.__getattribute__(node, "_flow")
+            if flow is not None:
+                nd = node._find_node_dict(flow._flow)
+                for outp in nd.get("outputs", []):
+                    self._slots.append((outp.get("name", ""), outp.get("type", "")))
+        except Exception:
+            pass
+
+    def _make_slot(self, name: str) -> SlotRef:
+        for sn, st in self._slots:
+            if sn == name:
+                return SlotRef(self._node, name, direction="output", slot_type=st)
+        raise KeyError(f"No output '{name}' on {self._node.type}.")
+
+    def _conn_str(self, name: str) -> Optional[str]:
+        try:
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is None:
+                return None
+            fd = flow._flow
+            nd = self._node._find_node_dict(fd)
+            for outp in nd.get("outputs", []):
+                if outp.get("name") == name:
+                    links = outp.get("links", [])
+                    if links:
+                        targets = []
+                        for lid in links:
+                            for lnk in fd.get("links", []):
+                                if lnk[0] == lid:
+                                    for n in fd.get("nodes", []):
+                                        if n.get("id") == lnk[3]:
+                                            di = n.get("inputs", [])
+                                            dn = di[lnk[4]].get("name", "?") if lnk[4] < len(di) else "?"
+                                            targets.append(f"{n.get('type', '?')}.{dn}")
+                        return ", ".join(targets) if targets else None
+                    return None
+        except Exception:
+            return None
+
+    def __dir__(self) -> List[str]:
+        return sorted(set(n for n, _ in self._slots) | {"status", "pop", "keys", "values", "items"})
+
+    def __getattr__(self, name: str) -> SlotRef:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        for sn, st in self._slots:
+            if sn == name:
+                return SlotRef(self._node, name, direction="output", slot_type=st)
+        raise AttributeError(f"No output '{name}' on {self._node.type}. Available: {[n for n, _ in self._slots]}")
+
+    def __getitem__(self, name: str) -> SlotRef:
+        return self._make_slot(name)
+
+    def __delitem__(self, name: str) -> None:
+        self._make_slot(name).disconnect()
+
+    def __contains__(self, name: str) -> bool:
+        return any(n == name for n, _ in self._slots)
+
+    def __iter__(self):
+        return iter(n for n, _ in self._slots)
+
+    def __len__(self) -> int:
+        return len(self._slots)
+
+    def keys(self) -> List[str]:
+        return [n for n, _ in self._slots]
+
+    def values(self) -> List[SlotRef]:
+        return [SlotRef(self._node, n, direction="output", slot_type=t) for n, t in self._slots]
+
+    def items(self) -> List[Tuple[str, SlotRef]]:
+        return [(n, SlotRef(self._node, n, direction="output", slot_type=t)) for n, t in self._slots]
+
+    def pop(self, name: str) -> SlotRef:
+        """Disconnect all links from output and return the SlotRef."""
+        slot = self._make_slot(name)
+        slot.disconnect()
+        return slot
+
+    def __repr__(self) -> str:
+        d = {name: self._conn_str(name) for name in self.keys()}
+        return repr(d)
+
+    def status(self) -> str:
+        """Full ANSI-colored connection status table."""
+        import sys
+        use_color = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+        lines = [f"{self._node.type} outputs:"]
+        try:
+            flow = object.__getattribute__(self._node, "_flow")
+            if flow is not None:
+                fd = flow._flow
+                nd = self._node._find_node_dict(fd)
+                for outp in nd.get("outputs", []):
+                    name = outp.get("name", "?")
+                    otype = outp.get("type", "?")
+                    links = outp.get("links", [])
+                    if links:
+                        targets = []
+                        for lid in links:
+                            for lnk in fd.get("links", []):
+                                if lnk[0] == lid:
+                                    for n in fd.get("nodes", []):
+                                        if n.get("id") == lnk[3]:
+                                            di = n.get("inputs", [])
+                                            dn = di[lnk[4]].get("name", "?") if lnk[4] < len(di) else "?"
+                                            targets.append(f"{n.get('type', '?')}.{dn}")
+                        ts = ", ".join(targets)
+                        if use_color:
+                            lines.append(f"  \033[32m●\033[0m {name:<20} [{otype}] \033[32m→ {ts}\033[0m")
+                        else:
+                            lines.append(f"  ● {name:<20} [{otype}] → {ts}")
+                    else:
+                        if use_color:
+                            lines.append(f"  \033[90m○ {name:<20} [{otype}]\033[0m")
+                        else:
+                            lines.append(f"  ○ {name:<20} [{otype}]")
+        except Exception:
+            lines.append("  (no flow data)")
+        return _PrettyStr("\n".join(lines))
+
+
 class NodeRef:
     """
     Wrap a single legacy proxy (FlowNodeProxy or NodeProxy) and provide path metadata.
     """
 
-    __slots__ = ("_p", "kind", "addr", "group", "index", "path", "where", "dictpath")
+    __slots__ = ("_p", "_flow", "kind", "addr", "group", "index", "path", "where", "dictpath")
 
     def __init__(
         self,
@@ -708,8 +2038,10 @@ class NodeRef:
         index: Optional[int],
         dotpath: str,
         dictpath: List[Any],
+        flow: Optional["Flow"] = None,
     ):
         object.__setattr__(self, "_p", proxy)
+        object.__setattr__(self, "_flow", flow)
         self.kind = kind
         self.addr = addr
         self.group = group
@@ -809,13 +2141,65 @@ class NodeRef:
             return _legacy.DictView(m)
         if name.startswith("_"):
             raise AttributeError(name)
-        return getattr(self._p, name)
+
+        # Slot discovery: node.inputs / node.outputs
+        if name == "inputs":
+            return InputsView(self)
+        if name == "outputs":
+            return OutputsView(self)
+
+        # Builder mode: return SlotRef for connection input names (enables >>)
+        flow = object.__getattribute__(self, "_flow")
+        if flow is not None:
+            try:
+                ni = getattr(flow._flow, "node_info", None)
+                if ni is not None:
+                    import json as _json
+                    ni_dict = _json.loads(_json.dumps(dict(ni)))
+                    node_type = self.type
+                    if node_type in ni_dict:
+                        from .connection import get_connection_input_names
+                        conn_names = get_connection_input_names(node_type, ni_dict)
+                        if name in conn_names:
+                            # Get slot type for richer repr
+                            slot_type = ""
+                            try:
+                                nd = self._find_node_dict(flow._flow)
+                                for inp in nd.get("inputs", []):
+                                    if inp.get("name") == name:
+                                        slot_type = inp.get("type", "")
+                                        break
+                            except Exception:
+                                pass
+                            return SlotRef(self, name, direction="input", slot_type=slot_type)
+            except Exception:
+                pass
+
+        # Inject node reference for .to_input()/.to_attr() on widget values
+        raw = getattr(self._p, name)
+        try:
+            from .models import WidgetValue
+            if isinstance(raw, WidgetValue):
+                object.__setattr__(raw, "_node_ref", self)
+                object.__setattr__(raw, "_attr_name", name)
+                return raw
+            wnames = self._widget_names()
+            if name in wnames:
+                return _wrap_attr_value(raw, self, name)
+        except Exception:
+            pass
+        return raw
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in ("_p", "kind", "addr", "group", "index", "path", "where", "dictpath"):
             return object.__setattr__(self, name, value)
         if name in ("_meta", "meta"):
             self._data_ref()["_meta"] = value
+            return
+        # Route property descriptors (bypass, mute, mode, color, etc.)
+        prop = getattr(type(self), name, None)
+        if isinstance(prop, property) and prop.fset is not None:
+            prop.fset(self, value)
             return
         return setattr(self._p, name, value)
 
@@ -833,18 +2217,46 @@ class NodeRef:
             return iter(self.unwrap())
 
     def __getitem__(self, key):
+        # Support [0] indexing when NodeRef is returned from flow.nodes.X
+        # (single-node case — acts like a 1-element list)
+        if isinstance(key, int):
+            if key == 0:
+                return self
+            raise IndexError(f"NodeRef index out of range (single node, got index {key})")
         try:
             return self._p[key]
         except Exception:
             return self.unwrap()[key]
 
     def __dir__(self) -> List[str]:
-        base = {"attrs", "choices", "tooltip", "spec", "tree", "to_dict", "unwrap",
-                "type", "title", "where", "meta"}
+        # Methods that actually work on NodeRef
+        base = {"attrs", "to_dict", "unwrap", "tree",
+                "type", "title", "where", "meta",
+                "inputs", "outputs", "to_input", "to_attr",
+                "remove", "delete",
+                "connect", "disconnect", "connections", "downstream",
+                "bypass", "mute", "mode", "color", "bgcolor",
+                "collapsed", "pos", "size"}
+        # Add widget names (these are readable/writable attributes)
         try:
             base.update(self._widget_dict().keys())
         except Exception:
             pass
+        # In builder mode, add connection input names (for >> shorthand)
+        flow = object.__getattribute__(self, "_flow")
+        if flow is not None:
+            try:
+                ni = getattr(flow._flow, "node_info", None)
+                if ni is not None:
+                    import json as _json
+                    ni_dict = _json.loads(_json.dumps(dict(ni)))
+                    node_type = self.type
+                    if node_type in ni_dict:
+                        from .connection import get_connection_input_names
+                        conn_names = get_connection_input_names(node_type, ni_dict)
+                        base.update(conn_names)
+            except Exception:
+                pass
         return sorted(base)
 
     def _widget_names(self) -> List[str]:
@@ -877,6 +2289,626 @@ class NodeRef:
             return {n: getattr(self._p, n, None) for n in names}
         except Exception:
             return {}
+
+    # ------------------------------------------------------------------
+    # GUI properties (1:1 with ComfyUI frontend)
+    # ------------------------------------------------------------------
+
+    def _node_dict_rw(self) -> Dict[str, Any]:
+        """Return the raw node dict for direct property access."""
+        flow = object.__getattribute__(self, "_flow")
+        if flow is not None:
+            return self._find_node_dict(flow._flow)
+        return self._p._get_data() if hasattr(self._p, "_get_data") else {}
+
+    @property
+    def mode(self) -> int:
+        """LiteGraph node mode: 0=active, 2=muted, 4=bypassed."""
+        return self._node_dict_rw().get("mode", 0)
+
+    @mode.setter
+    def mode(self, value: int) -> None:
+        self._node_dict_rw()["mode"] = value
+
+    @property
+    def bypass(self) -> bool:
+        """True when the node is bypassed (mode 4). Bypassed nodes pass data through."""
+        return self.mode == 4
+
+    @bypass.setter
+    def bypass(self, value: bool) -> None:
+        self._node_dict_rw()["mode"] = 4 if value else 0
+
+    @property
+    def mute(self) -> bool:
+        """True when the node is muted (mode 2). Muted nodes produce no output."""
+        return self.mode == 2
+
+    @mute.setter
+    def mute(self, value: bool) -> None:
+        self._node_dict_rw()["mode"] = 2 if value else 0
+
+    @property
+    def color(self) -> Optional[str]:
+        """Node title-bar color (hex string, e.g. ``'#232'``)."""
+        return self._node_dict_rw().get("color")
+
+    @color.setter
+    def color(self, value: Optional[str]) -> None:
+        nd = self._node_dict_rw()
+        if value is None:
+            nd.pop("color", None)
+        else:
+            nd["color"] = value
+
+    @property
+    def bgcolor(self) -> Optional[str]:
+        """Node body background color (hex string, e.g. ``'#353'``)."""
+        return self._node_dict_rw().get("bgcolor")
+
+    @bgcolor.setter
+    def bgcolor(self, value: Optional[str]) -> None:
+        nd = self._node_dict_rw()
+        if value is None:
+            nd.pop("bgcolor", None)
+        else:
+            nd["bgcolor"] = value
+
+    @property
+    def title(self) -> str:
+        """Display title (user-editable label). Falls back to node type if unset."""
+        nd = self._node_dict_rw()
+        return nd.get("title", nd.get("type", ""))
+
+    @title.setter
+    def title(self, value: str) -> None:
+        self._node_dict_rw()["title"] = value
+
+    @property
+    def collapsed(self) -> bool:
+        """True when the node is visually collapsed/minimized."""
+        return self._node_dict_rw().get("flags", {}).get("collapsed", False)
+
+    @collapsed.setter
+    def collapsed(self, value: bool) -> None:
+        nd = self._node_dict_rw()
+        flags = nd.setdefault("flags", {})
+        if value:
+            flags["collapsed"] = True
+        else:
+            flags.pop("collapsed", None)
+
+    @property
+    def pos(self) -> tuple:
+        """Node position as ``(x, y)``."""
+        p = self._node_dict_rw().get("pos", [0, 0])
+        return tuple(p)
+
+    @pos.setter
+    def pos(self, value: tuple) -> None:
+        self._node_dict_rw()["pos"] = list(value)
+
+    @property
+    def size(self) -> tuple:
+        """Node size as ``(width, height)``."""
+        s = self._node_dict_rw().get("size", [0, 0])
+        return tuple(s)
+
+    @size.setter
+    def size(self, value: tuple) -> None:
+        self._node_dict_rw()["size"] = list(value)
+
+    # ------------------------------------------------------------------
+    # Attr ↔ Input promotion (widget-to-slot conversion)
+    # ------------------------------------------------------------------
+
+    def to_input(self, name: str) -> None:
+        """Promote an attr to a connectable input slot.
+
+        Creates an input slot entry with a ``widget`` marker so ComfyUI
+        recognises it as a promoted widget.  Once promoted the attr
+        appears in ``node.inputs`` and can be wired via ``>>`` / ``<<``.
+
+        Args:
+            name: The attr name (e.g. ``"width"``, ``"seed"``).
+
+        Raises:
+            ValueError: If the name is not a promotable attr or is already
+                an input slot.
+        """
+        flow_data = self._get_flow_data()
+        nd = self._find_node_dict(flow_data)
+
+        # Check it's not already an input
+        for inp in nd.get("inputs", []):
+            if inp.get("name") == name:
+                return  # already promoted, nothing to do
+
+        # Look up the type from node_info
+        from .connection import get_promotable_attr_names
+        ni = getattr(flow_data, "node_info", None)
+        if ni is None:
+            raise ValueError(
+                f"Cannot promote '{name}' — no node_info available. "
+                f"Provide node_info when creating the Flow."
+            )
+        ct = nd.get("type", "")
+        promotable = get_promotable_attr_names(ct, ni)
+        if name not in promotable:
+            raise ValueError(
+                f"'{name}' is not a promotable attr on {ct}. "
+                f"Promotable: {list(promotable.keys())}"
+            )
+
+        slot_type = promotable[name]
+        new_input = {
+            "name": name,
+            "type": slot_type,
+            "widget": {"name": name},
+            "link": None,
+        }
+        nd.setdefault("inputs", []).append(new_input)
+
+    def to_attr(self, name: str) -> None:
+        """Demote an input slot back to an attr-only value.
+
+        Disconnects any connection and removes the input slot from the
+        node's inputs list.  The value in ``widgets_values`` is preserved.
+
+        Args:
+            name: The input slot name to demote.
+
+        Raises:
+            ValueError: If the input slot doesn't have a ``widget`` marker
+                (i.e. it's a natural connection input, not a promoted attr).
+        """
+        flow_data = self._get_flow_data()
+        nd = self._find_node_dict(flow_data)
+
+        inputs = nd.get("inputs", [])
+        target_idx = None
+        target_inp = None
+        for i, inp in enumerate(inputs):
+            if inp.get("name") == name:
+                target_idx = i
+                target_inp = inp
+                break
+
+        if target_inp is None:
+            return  # not an input slot, nothing to do
+
+        if not isinstance(target_inp.get("widget"), dict):
+            raise ValueError(
+                f"'{name}' is a natural connection input on {nd.get('type', '?')}, "
+                f"not a promoted attr. Cannot demote."
+            )
+
+        # Disconnect if connected
+        if target_inp.get("link") is not None:
+            try:
+                self.disconnect(name)
+            except Exception:
+                pass
+
+        # Remove from inputs list
+        inputs.pop(target_idx)
+
+    def _maybe_demote(self, name: str) -> None:
+        """Auto-demote an input to attr if it has a widget marker (was promoted)."""
+        try:
+            flow_data = self._get_flow_data()
+            nd = self._find_node_dict(flow_data)
+            for inp in nd.get("inputs", []):
+                if inp.get("name") == name and isinstance(inp.get("widget"), dict):
+                    self.to_attr(name)
+                    return
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Node removal convenience
+    # ------------------------------------------------------------------
+
+    def remove(self) -> None:
+        """Remove this node (and all its connections) from the flow."""
+        flow = object.__getattribute__(self, "_flow")
+        if flow is None:
+            raise RuntimeError(
+                "This NodeRef has no flow reference — remove() requires "
+                "a NodeRef created by Flow.add_node() or accessed from a builder Flow."
+            )
+        flow.remove_node(self)
+
+    def delete(self) -> None:
+        """Alias for ``remove()``."""
+        self.remove()
+
+    # ------------------------------------------------------------------
+    # Connection management (builder API)
+    # ------------------------------------------------------------------
+
+    def _get_flow_data(self) -> Dict[str, Any]:
+        """Return the underlying flow dict for link table operations."""
+        flow = object.__getattribute__(self, "_flow")
+        if flow is None:
+            raise RuntimeError(
+                "This NodeRef has no flow reference — connect/disconnect require "
+                "a NodeRef created by Flow.add_node() or accessed from a builder Flow."
+            )
+        # flow is flowtree.Flow, flow._flow is legacy Flow (dict subclass)
+        return flow._flow
+
+    def _find_node_dict(self, flow_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Find this node's raw dict in the flow's nodes list."""
+        node_id = int(self.addr)
+        for n in flow_data.get("nodes", []):
+            if n.get("id") == node_id:
+                return n
+        raise ValueError(f"Node {node_id} not found in flow")
+
+    def connect(
+        self,
+        input_name: str,
+        src_node: "NodeRef",
+        output_name_or_index: Any = None,
+    ) -> None:
+        """Connect an input on this node to an output on src_node.
+
+        Args:
+            input_name: Name of the input slot on this (destination) node.
+            src_node: The source NodeRef to connect from.
+            output_name_or_index: Output slot on src_node — name (str), index (int),
+                or None to auto-resolve by matching the input type against the
+                source node's outputs. Auto-resolve works when exactly one output
+                matches; raises ValueError if ambiguous.
+        """
+        if self.kind == "api":
+            return self._connect_api(input_name, src_node, output_name_or_index)
+        return self._connect_flow(input_name, src_node, output_name_or_index)
+
+    def _connect_flow(
+        self,
+        input_name: str,
+        src_node: "NodeRef",
+        output_name_or_index: Any = None,
+    ) -> None:
+        """Connect for workspace Flow nodes (link table surgery)."""
+        flow_data = self._get_flow_data()
+        dst_dict = self._find_node_dict(flow_data)
+        src_dict = src_node._find_node_dict(flow_data)
+
+        # Resolve destination input slot
+        dst_slot_idx = None
+        dst_slot = None
+        for i, inp in enumerate(dst_dict.get("inputs", [])):
+            if inp.get("name") == input_name:
+                dst_slot_idx = i
+                dst_slot = inp
+                break
+        if dst_slot is None:
+            raise ValueError(
+                f"Input '{input_name}' not found on node {dst_dict.get('type', '?')} "
+                f"(id={dst_dict.get('id')}). "
+                f"Available: {[s.get('name') for s in dst_dict.get('inputs', [])]}"
+            )
+
+        # Resolve source output slot
+        src_slot_idx = None
+        src_slot = None
+        outputs = src_dict.get("outputs", [])
+
+        if output_name_or_index is None:
+            # Auto-resolve: match input type against source outputs
+            input_type = dst_slot.get("type", "*")
+            matches = []
+            for i, outp in enumerate(outputs):
+                if outp.get("type") == input_type or input_type == "*" or outp.get("type") == "*":
+                    matches.append((i, outp))
+            if len(matches) == 1:
+                src_slot_idx, src_slot = matches[0]
+            elif len(matches) == 0:
+                raise ValueError(
+                    f"No output on {src_dict.get('type', '?')} matches input type "
+                    f"'{input_type}' (input '{input_name}'). "
+                    f"Available outputs: {[(s.get('name'), s.get('type')) for s in outputs]}"
+                )
+            else:
+                raise ValueError(
+                    f"Ambiguous: {len(matches)} outputs on {src_dict.get('type', '?')} "
+                    f"match type '{input_type}'. Specify output explicitly: "
+                    f"{[(s.get('name'), s.get('type')) for _, s in matches]}"
+                )
+        elif isinstance(output_name_or_index, int):
+            if 0 <= output_name_or_index < len(outputs):
+                src_slot_idx = output_name_or_index
+                src_slot = outputs[output_name_or_index]
+            else:
+                raise ValueError(
+                    f"Output index {output_name_or_index} out of range "
+                    f"(node {src_dict.get('type', '?')} has {len(outputs)} outputs)"
+                )
+        else:
+            out_name = str(output_name_or_index)
+            for i, outp in enumerate(outputs):
+                if outp.get("name") == out_name:
+                    src_slot_idx = i
+                    src_slot = outp
+                    break
+            if src_slot is None:
+                raise ValueError(
+                    f"Output '{output_name_or_index}' not found on node "
+                    f"{src_dict.get('type', '?')} (id={src_dict.get('id')}). "
+                    f"Available: {[s.get('name') for s in outputs]}"
+                )
+
+        # If already connected, disconnect first
+        if dst_slot.get("link") is not None:
+            self._disconnect_flow_slot(flow_data, dst_dict, dst_slot)
+
+        # Create new link
+        last_link = flow_data.get("last_link_id", 0)
+        new_link_id = last_link + 1
+        flow_data["last_link_id"] = new_link_id
+
+        type_name = dst_slot.get("type", src_slot.get("type", "*"))
+        link_entry = [
+            new_link_id,
+            src_dict["id"],
+            src_slot_idx,
+            dst_dict["id"],
+            dst_slot_idx,
+            type_name,
+        ]
+        flow_data.setdefault("links", []).append(link_entry)
+
+        # Update both nodes
+        dst_slot["link"] = new_link_id
+        src_slot.setdefault("links", []).append(new_link_id)
+
+        # Invalidate DAG cache
+        try:
+            object.__delattr__(flow_data, "_autoflow_dag_cache")
+        except (AttributeError, TypeError):
+            pass
+
+    def _connect_api(
+        self,
+        input_name: str,
+        src_node: "NodeRef",
+        output_slot: Any = 0,
+    ) -> None:
+        """Connect for API nodes (simple ref write)."""
+        d = self._data_ref()
+        inputs = d.get("inputs")
+        if not isinstance(inputs, dict):
+            d["inputs"] = inputs = {}
+        slot_idx = int(output_slot) if isinstance(output_slot, (int, float)) else 0
+        inputs[input_name] = [str(src_node.addr), slot_idx]
+
+    def disconnect(self, input_name: str) -> None:
+        """Disconnect an input on this node.
+
+        Args:
+            input_name: Name of the input slot to disconnect.
+        """
+        if self.kind == "api":
+            return self._disconnect_api(input_name)
+        return self._disconnect_flow(input_name)
+
+    def _disconnect_flow(self, input_name: str) -> None:
+        """Disconnect for workspace Flow nodes."""
+        flow_data = self._get_flow_data()
+        dst_dict = self._find_node_dict(flow_data)
+
+        # Find the input slot
+        dst_slot = None
+        for inp in dst_dict.get("inputs", []):
+            if inp.get("name") == input_name:
+                dst_slot = inp
+                break
+        if dst_slot is None:
+            raise ValueError(f"Input '{input_name}' not found on node {dst_dict.get('id')}")
+
+        if dst_slot.get("link") is None:
+            return  # already disconnected
+
+        self._disconnect_flow_slot(flow_data, dst_dict, dst_slot)
+
+        # Invalidate DAG cache
+        try:
+            object.__delattr__(flow_data, "_autoflow_dag_cache")
+        except (AttributeError, TypeError):
+            pass
+
+    @staticmethod
+    def _disconnect_flow_slot(
+        flow_data: Dict[str, Any],
+        dst_dict: Dict[str, Any],
+        dst_slot: Dict[str, Any],
+    ) -> None:
+        """Internal: remove a single link from the flow."""
+        link_id = dst_slot.get("link")
+        if link_id is None:
+            return
+
+        # Find the link entry to get source info
+        links = flow_data.get("links", [])
+        for lnk in links:
+            if isinstance(lnk, list) and len(lnk) >= 4 and lnk[0] == link_id:
+                src_node_id = lnk[1]
+                src_slot_idx = lnk[2]
+                # Remove from source node's output links
+                for n in flow_data.get("nodes", []):
+                    if n.get("id") == src_node_id:
+                        outputs = n.get("outputs", [])
+                        if src_slot_idx < len(outputs):
+                            out_links = outputs[src_slot_idx].get("links", [])
+                            if link_id in out_links:
+                                out_links.remove(link_id)
+                        break
+                break
+
+        # Clear destination input
+        dst_slot["link"] = None
+
+        # Remove link entry
+        flow_data["links"] = [
+            lnk for lnk in links
+            if not (isinstance(lnk, list) and len(lnk) >= 1 and lnk[0] == link_id)
+        ]
+
+    def _disconnect_api(self, input_name: str) -> None:
+        """Disconnect for API nodes."""
+        d = self._data_ref()
+        inputs = d.get("inputs")
+        if isinstance(inputs, dict) and input_name in inputs:
+            val = inputs[input_name]
+            if isinstance(val, list):
+                del inputs[input_name]
+
+    @property
+    def connections(self) -> Dict[str, Any]:
+        """Return a dict of input connections: {input_name: Connection(...)}.
+
+        Only populated connections are included (unlinked inputs are omitted).
+        """
+        from .connection import Connection
+
+        if self.kind == "api":
+            return self._connections_api()
+        return self._connections_flow()
+
+    def _connections_flow(self) -> Dict[str, Any]:
+        """Read connections for Flow nodes via the link table."""
+        from .connection import Connection
+
+        flow_data = self._get_flow_data()
+        node_dict = self._find_node_dict(flow_data)
+        result: Dict[str, Any] = {}
+
+        # Build a link_id → link_entry map for fast lookup
+        link_map: Dict[int, list] = {}
+        for lnk in flow_data.get("links", []):
+            if isinstance(lnk, list) and len(lnk) >= 6:
+                link_map[lnk[0]] = lnk
+
+        # Build a node_id → type map
+        type_map: Dict[int, str] = {}
+        for n in flow_data.get("nodes", []):
+            type_map[n.get("id", -1)] = n.get("type", "")
+
+        for inp in node_dict.get("inputs", []):
+            lid = inp.get("link")
+            if lid is None:
+                continue
+            lnk = link_map.get(lid)
+            if lnk is None:
+                continue
+            src_id = lnk[1]
+            src_slot = lnk[2]
+            result[inp["name"]] = Connection(
+                input_name=inp["name"],
+                from_node_id=str(src_id),
+                from_output=src_slot,
+                from_class_type=type_map.get(src_id, ""),
+            )
+        return result
+
+    def _connections_api(self) -> Dict[str, Any]:
+        """Read connections for API nodes."""
+        from .connection import Connection
+
+        d = self._data_ref()
+        inputs = d.get("inputs", {})
+        if not isinstance(inputs, dict):
+            return {}
+
+        result: Dict[str, Any] = {}
+        # Get parent ApiFlow to look up class_types
+        for name, val in inputs.items():
+            if isinstance(val, list) and len(val) == 2:
+                ref_id, ref_slot = val
+                if isinstance(ref_id, str) and isinstance(ref_slot, int):
+                    result[name] = Connection(
+                        input_name=name,
+                        from_node_id=str(ref_id),
+                        from_output=ref_slot,
+                    )
+        return result
+
+    @property
+    def downstream(self) -> Dict[int, list]:
+        """Return downstream connections: {output_slot_index: [Connection(...)]}.
+
+        Shows which nodes consume each output of this node.
+        """
+        from .connection import Connection
+
+        if self.kind == "api":
+            return self._downstream_api()
+        return self._downstream_flow()
+
+    def _downstream_flow(self) -> Dict[int, list]:
+        """Read downstream for Flow nodes via the link table."""
+        from .connection import Connection
+
+        flow_data = self._get_flow_data()
+        node_dict = self._find_node_dict(flow_data)
+        node_id = node_dict.get("id")
+
+        # Build node_id → type map
+        type_map: Dict[int, str] = {}
+        for n in flow_data.get("nodes", []):
+            type_map[n.get("id", -1)] = n.get("type", "")
+
+        # Build link_id → link_entry map
+        link_map: Dict[int, list] = {}
+        for lnk in flow_data.get("links", []):
+            if isinstance(lnk, list) and len(lnk) >= 6:
+                link_map[lnk[0]] = lnk
+
+        result: Dict[int, list] = {}
+        for outp in node_dict.get("outputs", []):
+            slot_idx = outp.get("slot_index", 0)
+            connections = []
+            for lid in outp.get("links", []):
+                lnk = link_map.get(lid)
+                if lnk is None:
+                    continue
+                dst_id = lnk[3]
+                dst_slot = lnk[4]
+                # Find dst input name
+                dst_input_name = ""
+                for n in flow_data.get("nodes", []):
+                    if n.get("id") == dst_id:
+                        inputs = n.get("inputs", [])
+                        if dst_slot < len(inputs):
+                            dst_input_name = inputs[dst_slot].get("name", "")
+                        break
+                connections.append(Connection(
+                    input_name=dst_input_name,
+                    from_node_id=str(node_id),
+                    from_output=slot_idx,
+                    from_class_type=type_map.get(node_id, ""),
+                    to_node_id=str(dst_id),
+                    to_input_name=dst_input_name,
+                    to_class_type=type_map.get(dst_id, ""),
+                ))
+            if connections:
+                result[slot_idx] = connections
+        return result
+
+    def _downstream_api(self) -> Dict[int, list]:
+        """Read downstream for API nodes (reverse-scan all nodes)."""
+        from .connection import Connection
+
+        # For API nodes we'd need the parent ApiFlow to scan all nodes.
+        # Return empty for now — this is a best-effort feature.
+        return {}
+
+    # ------------------------------------------------------------------
+    # End connection management
+    # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
         w = self._widget_dict()
@@ -915,6 +2947,27 @@ class NodeSet:
         if not self._nodes:
             raise IndexError("NodeSet is empty")
         return self._nodes[0]
+
+    def connect(self, input_name: str, src_node: "NodeRef", output_name_or_index: Any = None) -> None:
+        """Forward connect to the single node in this set.
+
+        Raises ValueError if the set has more than one node — use [index] to pick one.
+        """
+        if len(self._nodes) != 1:
+            raise ValueError(
+                f"Cannot connect on NodeSet with {len(self._nodes)} nodes. "
+                f"Use [index] to select one, e.g. flow.nodes.KSampler[0].connect(...)"
+            )
+        self._nodes[0].connect(input_name, src_node, output_name_or_index)
+
+    def disconnect(self, input_name: str) -> None:
+        """Forward disconnect to the single node in this set."""
+        if len(self._nodes) != 1:
+            raise ValueError(
+                f"Cannot disconnect on NodeSet with {len(self._nodes)} nodes. "
+                f"Use [index] to select one."
+            )
+        self._nodes[0].disconnect(input_name)
 
     def attrs(self, *, mode: str = "union") -> List[str]:
         if not self._nodes:
@@ -1112,7 +3165,7 @@ class FlowTreeNodesView:
             out[nid] = self[i]
         return out
 
-    def __getattr__(self, name: str) -> NodeSet:
+    def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
             raise AttributeError(name)
         flow = self._flowtree._flow
@@ -1128,17 +3181,21 @@ class FlowTreeNodesView:
         for i, (idx, n) in enumerate(matches):
             p = _legacy.FlowNodeProxy(n, idx, flow)
             object.__setattr__(p, "_autoflow_addr", str(n.get("id", idx)))
-            refs.append(
-                NodeRef(
-                    p,
-                    kind="flow",
-                    addr=str(n.get("id", idx)),
-                    group=name,
-                    index=i,
-                    dotpath=f"nodes.{name}[{i}]",
-                    dictpath=["nodes", idx],
-                )
+            ref = NodeRef(
+                p,
+                kind="flow",
+                addr=str(n.get("id", idx)),
+                group=name,
+                index=i,
+                dotpath=f"nodes.{name}[{i}]",
+                dictpath=["nodes", idx],
             )
+            # Set _flow so connect/disconnect/>> work on these NodeRefs
+            object.__setattr__(ref, "_flow", self._flowtree)
+            refs.append(ref)
+        # Single node → return NodeRef directly (same type as add_node())
+        if len(refs) == 1:
+            return refs[0]
         return NodeSet(refs, kind="flow", set_path=f"nodes.{name}", set_dictpath=["nodes", name])
 
     def by_path(self, addr: str) -> NodeRef:

@@ -381,7 +381,12 @@ o3 = NodeInfo.load(oi_path)
 print("KSampler" in o3)
 """
         try:
-            out = _run_subprocess(code, {"AUTOFLOW_MODEL_LAYER": "flowtree"})
+            # Strip AUTOFLOW env vars so NodeInfo() starts truly empty
+            out = _run_subprocess(code, {
+                "AUTOFLOW_MODEL_LAYER": "flowtree",
+                "AUTOFLOW_NODEINFO_SOURCE": "",
+                "AUTOFLOW_COMFYUI_SERVER_URL": "",
+            })
         except (subprocess.CalledProcessError, RuntimeError) as e:
             raise SkipTest(f"subprocess failed: {e}")
         assert out[0].strip() == "0", f"Expected 0, got {out[0]!r}"

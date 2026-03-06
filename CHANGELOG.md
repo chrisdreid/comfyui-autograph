@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-03-05
+
+### Added
+- **Builder API** — `Flow.create()`, `flow.add_node()`, `flow.remove_node()` for programmatic workflow construction
+- **Slot Discovery** — `node.inputs` / `node.outputs` return dict-like `InputsView`/`OutputsView` with tab completion, `.status()`, `.keys()`, `.pop()`, etc.
+- **Connection Operators** — `>>` (push), `<<` (pull), `.connect()`, `.disconnect()` with `None` for disconnection and list fan-out
+- **Attr ↔ Input Promotion** — `to_input()` / `to_attr()` on both `NodeRef` and `WidgetValue`, auto-promotion via `.inputs.attr_name` access, auto-demotion on disconnect
+- **Node GUI properties** — `bypass`, `mute`, `mode`, `color`, `bgcolor`, `title`, `collapsed`, `pos`, `size` on `NodeRef` for full ComfyUI frontend parity
+- **Groups** — `flow.add_group()`, `flow.remove_group()`, `flow.groups` with auto-bounding from node positions
+- **Canvas viewport** — `flow.canvas_scale`, `flow.canvas_offset` for zoom/pan state
+- **Extra metadata** — `flow.extra` dict access for frontend version, extensions, etc.
+- **Execution order** — `flow.compute_order()` computes and sets topological order on all nodes
+- **Node removal** — `node.remove()` / `node.delete()` convenience methods
+- **Workflow embedding** — `Flow.submit(embed_workflow=True)` auto-embeds workspace JSON in PNG metadata
+- **`WidgetValue.to_input()` / `.to_attr()`** — promote/demote directly from attribute access: `node.width.to_input()`
+- Tests 9.17–9.31 in `phase_09_builder.py` (31 total Phase 9 tests)
+- **Auto-save path** — `flow.save()` with no args re-saves to the last loaded/saved path; `flow._filepath` tracks it
+- **REPL-friendly status()** — `node.inputs.status()` and `node.outputs.status()` display nicely in REPL without `print()`
+
+### Fixed
+- **Widget values scramble on `__setattr__`** — `FlowNodeProxy.__setattr__` now updates values in-place in the original `widgets_values` array, preserving frontend-only values like `control_after_generate` that aren't in server `object_info`
+- **`submit(wait=True)` hangs after job completes** — history poll loop stopped re-fetching once ComfyUI returned `{}` because `if history is None` was always False; now re-polls until `prompt_id` appears in history
+- **`embed_workflow` serialization** — uses `to_json()` path instead of `dict()` + `json.dumps(default=str)`, avoiding stringification of custom types
+
+### Changed
+- `NodeRef.__setattr__` routes Python property descriptors through the descriptor protocol before falling through to the proxy
+- `NodeRef.__dir__` includes all GUI property names for tab completion
+- Bumped version from 1.4.1 to 1.5.0
+
+---
+
 ## [1.4.1] - 2026-03-02
 
 ### Fixed

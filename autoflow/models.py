@@ -660,11 +660,13 @@ class WidgetValue:
     so ``node.seed == 200`` still works as expected.
     """
 
-    __slots__ = ("_value", "_spec")
+    __slots__ = ("_value", "_spec", "_node_ref", "_attr_name")
 
     def __init__(self, value: Any, spec: Optional[list] = None):
         object.__setattr__(self, "_value", value)
         object.__setattr__(self, "_spec", spec)
+        object.__setattr__(self, "_node_ref", None)
+        object.__setattr__(self, "_attr_name", None)
 
     # --- transparent delegation ---
     def __repr__(self) -> str:
@@ -768,8 +770,24 @@ class WidgetValue:
         """Return the raw node_info spec for this input."""
         return self._spec
 
+    def to_input(self) -> None:
+        """Promote this attr to a connectable input slot."""
+        nr = self._node_ref
+        name = self._attr_name
+        if nr is None or name is None:
+            raise RuntimeError("WidgetValue has no node reference — cannot promote.")
+        nr.to_input(name)
+
+    def to_attr(self) -> None:
+        """Demote the corresponding input slot back to attr-only."""
+        nr = self._node_ref
+        name = self._attr_name
+        if nr is None or name is None:
+            raise RuntimeError("WidgetValue has no node reference — cannot demote.")
+        nr.to_attr(name)
+
     def __dir__(self) -> List[str]:
-        return ["value", "choices", "tooltip", "spec"]
+        return ["value", "choices", "tooltip", "spec", "to_input", "to_attr"]
 
 
 class FlowNodeProxy(_DictMixin):
@@ -914,9 +932,36 @@ class FlowNodeProxy(_DictMixin):
             if widget_names and name in widget_names:
                 wv0 = node.get("widgets_values")
                 wv0_list = wv0 if isinstance(wv0, list) else []
+                # Use alignment to find the correct position of this widget
+                # in the original array, then update in-place to preserve
+                # values unknown to node_info (e.g. control_after_generate).
                 aligned = align_widgets_values(self.type, list(wv0_list), widget_names, node_info=node_info)
-                aligned[widget_names.index(name)] = value
-                node["widgets_values"] = aligned
+                target_idx = widget_names.index(name)
+                old_val = aligned[target_idx] if target_idx < len(aligned) else None
+                # Find the position of old_val in the original array
+                # by tracing the alignment mapping
+                updated = False
+                if wv0_list:
+                    # Build a forward map: for each widget_name[i], which
+                    # original index does it correspond to?
+                    remaining = list(range(len(wv0_list)))
+                    idx_map: dict = {}
+                    for wi, wn in enumerate(widget_names):
+                        wval = aligned[wi] if wi < len(aligned) else None
+                        for ri, oi in enumerate(remaining):
+                            if oi < len(wv0_list) and wv0_list[oi] == wval:
+                                idx_map[wi] = oi
+                                remaining.pop(ri)
+                                break
+                    if target_idx in idx_map:
+                        wv0_list[idx_map[target_idx]] = value
+                        node["widgets_values"] = wv0_list
+                        updated = True
+                if not updated:
+                    # Fallback: replace with aligned (for newly created nodes
+                    # where widgets_values may be empty or mismatched)
+                    aligned[target_idx] = value
+                    node["widgets_values"] = aligned
                 return
 
         node[name] = value
@@ -1786,6 +1831,37 @@ class Flow(dict):
     @classmethod
     def load(cls, x: Union[str, Path, bytes, Dict[str, Any]]) -> "Flow":
         return cls(x)
+
+    @classmethod
+    def _from_raw(
+        cls,
+        data: Dict[str, Any],
+        *,
+        node_info: Optional[Union[Dict[str, Any], str, Path]] = None,
+        timeout: int = DEFAULT_HTTP_TIMEOUT_S,
+    ) -> "Flow":
+        """Construct a Flow from a raw dict, bypassing normal validation.
+
+        Used by Flow.create() to build empty flows.  The caller is responsible
+        for ensuring the dict has the required structure.
+        """
+        inst = dict.__new__(cls)
+        dict.__init__(inst, data)
+        inst.workflow_meta = data.get("extra") if isinstance(data.get("extra"), dict) else None
+        object.__setattr__(inst, "_autoflow_source", "created")
+        if node_info is not None:
+            from .convert import resolve_node_info_with_origin
+
+            oi_dict, _use_api, origin = resolve_node_info_with_origin(node_info, None, timeout, allow_env=True)
+            oi_obj = NodeInfo(oi_dict or {})
+            setattr(oi_obj, "_autoflow_origin", origin)
+            s = oi_obj.source
+            if isinstance(s, str) and s:
+                setattr(oi_obj, "_autoflow_source", s)
+            inst.node_info = oi_obj
+        else:
+            inst.node_info = None
+        return inst
 
     def to_json(self, indent: int = DEFAULT_JSON_INDENT, ensure_ascii: bool = DEFAULT_JSON_ENSURE_ASCII) -> str:
         return json.dumps(self, indent=indent, ensure_ascii=ensure_ascii) + "\n"

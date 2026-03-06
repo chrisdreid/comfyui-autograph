@@ -399,7 +399,7 @@ def _submit_impl(
     history = history_prefetch
     while time.time() < deadline:
         try:
-            if history is None:
+            if not (isinstance(history, dict) and prompt_id in history):
                 history = _net.http_json(history_url, payload=None, timeout=timeout, method="GET")
             if isinstance(history, dict) and prompt_id in history:
                 break

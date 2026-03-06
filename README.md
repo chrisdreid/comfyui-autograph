@@ -7,7 +7,7 @@ ComfyUI
 ██╔══██║██║   ██║   ██║   ██║   ██║██╔══╝  ██║     ██║   ██║██║███╗██║
 ██║  ██║╚██████╔╝   ██║   ╚██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝
 ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝ 
-                                                       version: 1.4.2
+                                                       version: 1.5.0
 ```
 
 [![PyPI version](https://img.shields.io/pypi/v/comfyui-autoflow?color=blue)](https://pypi.org/project/comfyui-autoflow/)
@@ -202,6 +202,48 @@ python -m autoflow -i workflow.json -o workflow-api.json -f node-info.json
 ```
 
 - More: [`docs/convert.md`](docs/convert.md)
+
+## Build Workflows from Scratch
+
+Create and wire ComfyUI workflows entirely from Python — full tab completion, Pythonic dict-like views, and multiple connection syntaxes.
+
+```python
+from autoflow import Flow, NodeInfo
+
+flow = Flow(node_info="node-info.json")
+
+# Add nodes
+ckpt = flow.add_node("CheckpointLoaderSimple")
+pos  = flow.add_node("CLIPTextEncode", text="a beautiful landscape")
+neg  = flow.add_node("CLIPTextEncode", text="ugly, blurry")
+lat  = flow.add_node("EmptyLatentImage", width=1024, height=1024)
+ks   = flow.add_node("KSampler", seed=42, steps=20, cfg=7.0)
+vae  = flow.add_node("VAEDecode")
+save = flow.add_node("SaveImage", filename_prefix="test")
+
+# Wire connections — all equivalent styles:
+ckpt.outputs.MODEL >> ks.inputs.model      # explicit push
+ks.inputs.positive << pos                  # pull (auto-resolve output)
+ckpt.outputs.CLIP >> [pos.inputs.clip, neg.inputs.clip]  # fan-out
+ckpt >> vae.vae                            # shorthand (auto-resolve)
+
+# Inspect connections
+ks.inputs               # {'model': 'CheckpointLoaderSimple.MODEL', 'positive': None, ...}
+ckpt.outputs             # {'MODEL': 'KSampler.model', 'CLIP': '...', 'VAE': None}
+print(ks.inputs.status()) # full ANSI-colored status table
+
+# Disconnect
+ks.inputs.model << None                   # operator
+ckpt.outputs.CLIP.disconnect(pos.inputs.clip)  # targeted
+
+# Save
+flow.auto_layout()
+flow.save("my-workflow.json")
+```
+
+- `node.inputs` / `node.outputs` — dict-like views: `[]`, `pop()`, `del`, `keys/values/items`
+- `flow.nodes.KSampler` returns the same `NodeRef` as `flow.add_node()`
+- `.status()` on any view gives a full ANSI-colored connection table
 
 ## Load from PNG (extract embedded workflow)
 

@@ -1144,9 +1144,19 @@ def get_widget_input_names(class_type: str, node_info: Optional[Dict[str, Any]] 
                 l = len(spec)
                 if l == 0:
                     continue
-                if l == 1 and isinstance(spec[0], str):
+                # forceInput: true → connection slot, not widget
+                if l >= 2 and isinstance(spec[1], dict) and spec[1].get("forceInput"):
                     continue
+                # Single string type → connection-only (unless COMBO)
+                if l == 1 and isinstance(spec[0], str):
+                    if spec[0] == "COMBO":
+                        widget_names.append(name)  # COMBO with no options is still a widget
+                    continue
+                # String + tooltip-only dict → connection-only (unless COMBO)
                 if l == 2 and isinstance(spec[0], str) and isinstance(spec[1], dict):
+                    if spec[0] == "COMBO":
+                        widget_names.append(name)
+                        continue
                     opts = spec[1]
                     if not opts or (len(opts) == 1 and "tooltip" in opts):
                         continue

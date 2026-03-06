@@ -11,6 +11,7 @@ from .model_layer import (  # noqa: F401
     NodeInfo,
 )
 from .models import WidgetValue  # noqa: F401
+from .connection import Connection  # noqa: F401
 from .convert import (  # noqa: F401
     ConvertResult,
     WorkflowConverterError,
@@ -73,4 +74,5 @@ __all__ = [
     "map_paths",
     "force_recompute",
     "WidgetValue",
+    "Connection",
 ]
