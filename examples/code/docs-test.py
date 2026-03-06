@@ -378,6 +378,10 @@ def _looks_needs_comfyui_runtime(text: str) -> bool:
         ".execute(",
         "from_comfyui_modules",
         "import comfy",
+        'node_info="modules"',
+        "node_info='modules'",
+        'NodeInfo("modules")',
+        "NodeInfo('modules')",
     ]
     return any(n in text for n in needles)
 
@@ -404,6 +408,19 @@ def _looks_needs_optional_deps(text: str) -> bool:
         "import PIL",
     ]
     return any(n in text for n in needles)
+
+
+def _looks_needs_image_file(text: str) -> bool:
+    """Return True if snippet reads image files (output.png, ComfyUI_*.png)."""
+    needles = [
+        'output.png',
+        'ComfyUI_00001_.png',
+        '.read_bytes()',
+    ]
+    # Needs both a PNG reference AND a read operation
+    has_png = any(n in text for n in needles[:2])
+    has_read = '.read_bytes()' in text or 'open(' in text
+    return has_png and has_read
 
 
 def _looks_data_specific_python(text: str) -> bool:
@@ -791,6 +808,12 @@ def _run_python_block(
             import PIL  # noqa: F401
         except ImportError:
             print("[python] compile: ok (exec skipped: needs Pillow)")
+            return
+
+    if _looks_needs_image_file(code):
+        # Check if sandbox actually has the image files
+        if not (sandbox_dir / "output.png").exists() and not (sandbox_dir / "ComfyUI_00001_.png").exists():
+            print("[python] compile: ok (exec skipped: needs image fixture)")
             return
 
     # Execute in a namespace.  When shared_ns is provided (per-page chaining),
