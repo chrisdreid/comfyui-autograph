@@ -1,4 +1,4 @@
-# Contributing: Tests
+﻿# Contributing: Tests
 
 ## Test Architecture
 
@@ -9,7 +9,7 @@ flowchart TD
   repo --> docs[Docs Test Harness]
 
   master -->|"python examples/unittests/main.py --non-interactive --no-browser"| masterRun[Run Offline]
-  masterRun --> masterOut["154 tests across 15 stages<br/>HTML report at autoflow-test-suite/outputs/index.html"]
+  masterRun --> masterOut["154 tests across 15 stages<br/>HTML report at autograph-test-suite/outputs/index.html"]
 
   unit -->|"python -m unittest discover -s examples/unittests -v"| unitRun[Run Offline]
   unitRun --> unitOut["Output: ok/FAIL + OK/FAILED"]

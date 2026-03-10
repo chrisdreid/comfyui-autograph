@@ -1,4 +1,4 @@
-## Advanced topics
+﻿## Advanced topics
 
 This file is intentionally **not** a docs index.
 
@@ -20,7 +20,7 @@ flowchart  LR
 - Save patterns and overwrite controls:
   - `images.save("outputs")`
   - `images.save("outputs/frame.###.png")`
-  - default output dir: set env `AUTOFLOW_OUTPUT_PATH` and call `images.save(filename="frame.###.png")`
+  - default output dir: set env `AUTOGRAPH_OUTPUT_PATH` and call `images.save(filename="frame.###.png")`
   - more: [`submit-and-images.md`](submit-and-images.md)
 - Optional transcode helpers:
   - Pillow (optional): save JPEG/WebP/etc
@@ -96,7 +96,7 @@ All major objects have curated `__dir__` methods — tab completion shows only u
 Both `Flow` (workspace) and `ApiFlow` (API payload) expose a best-effort dependency graph derived from links/inputs:
 
 ```python
-from autoflow import Flow, ApiFlow
+from autograph import Flow, ApiFlow
 
 flow = Flow("workflow.json")
 dag = flow.dag
@@ -125,7 +125,7 @@ Notes:
 If you renamed a subgraph in the GUI, you can find it by title and still print a stable path for debugging/copy/paste.
 
 ```python
-from autoflow import Flow, ApiFlow
+from autograph import Flow, ApiFlow
 
 # Workspace flow (supports nested subgraphs; deep=True by default)
 flow = Flow("workflow.json")
@@ -156,7 +156,7 @@ Examples:
 ```python
 # continued
 import re
-from autoflow import Flow
+from autograph import Flow
 
 flow = Flow("workflow.json", node_info="node_info.json")
 
@@ -184,5 +184,5 @@ same_seed = flow.find(seed=re.compile(r"^123$"), depth=8)
   - more: [`troubleshooting.md`](troubleshooting.md)
 
 ## Deprecated / experimental switches
-- `AUTOFLOW_MODEL_LAYER` (internal): switches between model implementations for local testing.
+- `AUTOGRAPH_MODEL_LAYER` (internal): switches between model implementations for local testing.
   - more: [`node-info-and-env.md`](node-info-and-env.md)

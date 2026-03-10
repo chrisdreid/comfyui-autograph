@@ -1,9 +1,9 @@
-"""autoflow.models
+"""autograph.models
 
 Legacy-parity model layer (dict/list subclasses + drilling helpers).
 
 This module intentionally mirrors the behavior of the reference implementation in
-`autoflow/api-legacy.py`, while delegating non-model concerns to the split modules:
+`autograph/api-legacy.py`, while delegating non-model concerns to the split modules:
 - defaults: env/default constants
 - pngmeta: png/json/path heuristics
 - net: explicit server URL resolution
@@ -243,10 +243,10 @@ class _DictMixin:
     Subclasses must implement _get_data() -> dict.
     """
 
-    __slots__ = ("_autoflow_addr",)
+    __slots__ = ("_AUTOGRAPH_addr",)
 
     def path(self) -> str:
-        addr = getattr(self, "_autoflow_addr", None)
+        addr = getattr(self, "_AUTOGRAPH_addr", None)
         if isinstance(addr, str) and addr:
             return addr
         try:
@@ -366,7 +366,7 @@ class DictView(_DictMixin):
 class ListView:
     """List proxy with 1-item list-of-dicts attribute drilling; modifications propagate."""
 
-    __slots__ = ("_data", "_autoflow_addr")
+    __slots__ = ("_data", "_AUTOGRAPH_addr")
 
     def __init__(self, data: List[Any]):
         object.__setattr__(self, "_data", data)
@@ -375,7 +375,7 @@ class ListView:
         return object.__getattribute__(self, "_data")
 
     def path(self) -> str:
-        addr = getattr(self, "_autoflow_addr", None)
+        addr = getattr(self, "_AUTOGRAPH_addr", None)
         return addr if isinstance(addr, str) else ""
 
     def address(self) -> str:
@@ -1178,7 +1178,7 @@ class FlowNodesView:
                         continue
 
             p = FlowNodeProxy(node, 0, flow)
-            object.__setattr__(p, "_autoflow_addr", path)
+            object.__setattr__(p, "_AUTOGRAPH_addr", path)
             out.append(p)
 
         return out
@@ -1334,7 +1334,7 @@ class ApiFlow(dict):
                     # Steal the converted data and metadata.
                     super().__init__(converted)
                     if isinstance(src, str) and src:
-                        object.__setattr__(self, "_autoflow_source", f"converted_from({src})")
+                        object.__setattr__(self, "_AUTOGRAPH_source", f"converted_from({src})")
                     self.node_info = converted.node_info
                     self.use_api = converted.use_api if converted.use_api is not None else use_api
                     self.workflow_meta = converted.workflow_meta if converted.workflow_meta is not None else workflow_meta
@@ -1356,24 +1356,24 @@ class ApiFlow(dict):
             super().__init__(x if x is not None else {}, *args, **kwargs)
 
         if isinstance(src, str) and src:
-            object.__setattr__(self, "_autoflow_source", src)
+            object.__setattr__(self, "_AUTOGRAPH_source", src)
 
         if node_info is not None and not isinstance(node_info, dict):
             from .convert import resolve_node_info_with_origin
 
             oi_dict, _use_api, origin = resolve_node_info_with_origin(node_info, None, DEFAULT_HTTP_TIMEOUT_S, allow_env=True)
             oi_obj = NodeInfo(oi_dict or {})
-            setattr(oi_obj, "_autoflow_origin", origin)
+            setattr(oi_obj, "_AUTOGRAPH_origin", origin)
             # Cache a stable string source for easy introspection.
             s = oi_obj.source
             if isinstance(s, str) and s:
-                setattr(oi_obj, "_autoflow_source", s)
+                setattr(oi_obj, "_AUTOGRAPH_source", s)
             node_info = oi_obj
         elif node_info is not None and isinstance(node_info, dict) and not isinstance(node_info, NodeInfo):
             # Wrap plain dicts so callers can do `api.node_info.source`.
             oi_obj = NodeInfo(node_info)
-            if not getattr(oi_obj, "_autoflow_source", None):
-                setattr(oi_obj, "_autoflow_source", "dict")
+            if not getattr(oi_obj, "_AUTOGRAPH_source", None):
+                setattr(oi_obj, "_AUTOGRAPH_source", "dict")
             node_info = oi_obj
 
         self.node_info = node_info
@@ -1393,12 +1393,12 @@ class ApiFlow(dict):
 
     @property
     def source(self) -> Optional[str]:
-        return getattr(self, "_autoflow_source", None)
+        return getattr(self, "_AUTOGRAPH_source", None)
 
     @property
     def node_info_origin(self):
         oi = getattr(self, "node_info", None)
-        return getattr(oi, "origin", None) or getattr(oi, "_autoflow_origin", None)
+        return getattr(oi, "origin", None) or getattr(oi, "_AUTOGRAPH_origin", None)
 
     @property
     def dag(self):
@@ -1409,13 +1409,13 @@ class ApiFlow(dict):
         - `.edges`, `.deps(node_id)`, `.ancestors(node_id)`
         - `.to_dot()`, `.to_mermaid()`
         """
-        cache = getattr(self, "_autoflow_dag_cache", None)
+        cache = getattr(self, "_AUTOGRAPH_dag_cache", None)
         if cache is not None:
             return cache
         from .dag import build_api_dag
 
         d = build_api_dag(dict(self))
-        object.__setattr__(self, "_autoflow_dag_cache", d)
+        object.__setattr__(self, "_AUTOGRAPH_dag_cache", d)
         return d
 
     def __getattr__(self, name: str) -> NodeGroup:
@@ -1492,7 +1492,7 @@ class ApiFlow(dict):
                         continue
 
             p = NodeProxy(node, nid_s, self)
-            object.__setattr__(p, "_autoflow_addr", nid_s)
+            object.__setattr__(p, "_AUTOGRAPH_addr", nid_s)
             out.append(p)
 
         return out
@@ -1771,7 +1771,7 @@ class Flow(dict):
 
             super().__init__(data)
             if isinstance(src, str) and src:
-                object.__setattr__(self, "_autoflow_source", src)
+                object.__setattr__(self, "_AUTOGRAPH_source", src)
             inferred = data.get("extra") if isinstance(data.get("extra"), dict) else None
             self.workflow_meta = copy.deepcopy(inferred) if inferred is not None else None
             if workflow_meta is not None:
@@ -1782,20 +1782,20 @@ class Flow(dict):
 
                 oi_dict, _use_api, origin = resolve_node_info_with_origin(node_info, None, timeout, allow_env=True)
                 oi_obj = NodeInfo(oi_dict or {})
-                setattr(oi_obj, "_autoflow_origin", origin)
+                setattr(oi_obj, "_AUTOGRAPH_origin", origin)
                 s = oi_obj.source
                 if isinstance(s, str) and s:
-                    setattr(oi_obj, "_autoflow_source", s)
+                    setattr(oi_obj, "_AUTOGRAPH_source", s)
                 self.node_info = oi_obj
             elif fetch_oi:
-                effective = server_url or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+                effective = server_url or os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
                 if not effective:
-                    raise ValueError("fetch_oi=True requires server_url= (or env AUTOFLOW_COMFYUI_SERVER_URL).")
+                    raise ValueError("fetch_oi=True requires server_url= (or env AUTOGRAPH_COMFYUI_SERVER_URL).")
                 oi_obj = NodeInfo(fetch_node_info(effective, timeout=timeout))
                 from .origin import NodeInfoOrigin
 
-                setattr(oi_obj, "_autoflow_origin", NodeInfoOrigin(requested="fetch_oi", resolved="server", effective_server_url=effective))
-                setattr(oi_obj, "_autoflow_source", f"server:{effective}")
+                setattr(oi_obj, "_AUTOGRAPH_origin", NodeInfoOrigin(requested="fetch_oi", resolved="server", effective_server_url=effective))
+                setattr(oi_obj, "_AUTOGRAPH_source", f"server:{effective}")
                 self.node_info = oi_obj
             else:
                 self.node_info = None
@@ -1803,27 +1803,27 @@ class Flow(dict):
 
         super().__init__(x if x is not None else {}, *args, **kwargs)
         if isinstance(src, str) and src:
-            object.__setattr__(self, "_autoflow_source", src)
+            object.__setattr__(self, "_AUTOGRAPH_source", src)
         self.workflow_meta = workflow_meta
         if node_info is not None:
             from .convert import resolve_node_info_with_origin
 
             oi_dict, _use_api, origin = resolve_node_info_with_origin(node_info, None, timeout, allow_env=True)
             oi_obj = NodeInfo(oi_dict or {})
-            setattr(oi_obj, "_autoflow_origin", origin)
+            setattr(oi_obj, "_AUTOGRAPH_origin", origin)
             s = oi_obj.source
             if isinstance(s, str) and s:
-                setattr(oi_obj, "_autoflow_source", s)
+                setattr(oi_obj, "_AUTOGRAPH_source", s)
             self.node_info = oi_obj
         elif fetch_oi:
-            effective = server_url or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+            effective = server_url or os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
             if not effective:
-                raise ValueError("fetch_oi=True requires server_url= (or env AUTOFLOW_COMFYUI_SERVER_URL).")
+                raise ValueError("fetch_oi=True requires server_url= (or env AUTOGRAPH_COMFYUI_SERVER_URL).")
             oi_obj = NodeInfo(fetch_node_info(effective, timeout=timeout))
             from .origin import NodeInfoOrigin
 
-            setattr(oi_obj, "_autoflow_origin", NodeInfoOrigin(requested="fetch_oi", resolved="server", effective_server_url=effective))
-            setattr(oi_obj, "_autoflow_source", f"server:{effective}")
+            setattr(oi_obj, "_AUTOGRAPH_origin", NodeInfoOrigin(requested="fetch_oi", resolved="server", effective_server_url=effective))
+            setattr(oi_obj, "_AUTOGRAPH_source", f"server:{effective}")
             self.node_info = oi_obj
         else:
             self.node_info = None
@@ -1848,16 +1848,16 @@ class Flow(dict):
         inst = dict.__new__(cls)
         dict.__init__(inst, data)
         inst.workflow_meta = data.get("extra") if isinstance(data.get("extra"), dict) else None
-        object.__setattr__(inst, "_autoflow_source", "created")
+        object.__setattr__(inst, "_AUTOGRAPH_source", "created")
         if node_info is not None:
             from .convert import resolve_node_info_with_origin
 
             oi_dict, _use_api, origin = resolve_node_info_with_origin(node_info, None, timeout, allow_env=True)
             oi_obj = NodeInfo(oi_dict or {})
-            setattr(oi_obj, "_autoflow_origin", origin)
+            setattr(oi_obj, "_AUTOGRAPH_origin", origin)
             s = oi_obj.source
             if isinstance(s, str) and s:
-                setattr(oi_obj, "_autoflow_source", s)
+                setattr(oi_obj, "_AUTOGRAPH_source", s)
             inst.node_info = oi_obj
         else:
             inst.node_info = None
@@ -1879,11 +1879,11 @@ class Flow(dict):
     @property
     def node_info_origin(self):
         oi = getattr(self, "node_info", None)
-        return getattr(oi, "origin", None) or getattr(oi, "_autoflow_origin", None)
+        return getattr(oi, "origin", None) or getattr(oi, "_AUTOGRAPH_origin", None)
 
     @property
     def source(self) -> Optional[str]:
-        return getattr(self, "_autoflow_source", None)
+        return getattr(self, "_AUTOGRAPH_source", None)
 
     @property
     def dag(self):
@@ -1894,13 +1894,13 @@ class Flow(dict):
         - `.edges`, `.deps(node_id)`, `.ancestors(node_id)`
         - `.to_dot()`, `.to_mermaid()`
         """
-        cache = getattr(self, "_autoflow_dag_cache", None)
+        cache = getattr(self, "_AUTOGRAPH_dag_cache", None)
         if cache is not None:
             return cache
         from .dag import build_flow_dag
 
         d = build_flow_dag(dict(self), node_info=getattr(self, "node_info", None))
-        object.__setattr__(self, "_autoflow_dag_cache", d)
+        object.__setattr__(self, "_AUTOGRAPH_dag_cache", d)
         return d
 
     def find(
@@ -1945,8 +1945,8 @@ class Flow(dict):
         *,
         convert_callbacks: Optional[Union[Callable[[Dict[str, Any]], Any], Iterable[Callable[[Dict[str, Any]], Any]]]] = None,
         map_callbacks: Optional[Union[Callable[[Dict[str, Any]], Any], Iterable[Callable[[Dict[str, Any]], Any]]]] = None,
-        disable_autoflow_meta: bool = False,
-        apply_autoflow_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
+        disable_AUTOGRAPH_meta: bool = False,
+        apply_AUTOGRAPH_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
     ) -> ApiFlow:
         # Prefer attached node_info (with source metadata) when caller doesn't override.
         oi_for_convert = node_info if node_info is not None else getattr(self, "node_info", None)
@@ -1954,8 +1954,8 @@ class Flow(dict):
             # Wrap plain dicts so callers can introspect `api.node_info.source`.
             if isinstance(oi_for_convert, dict):
                 oi_obj = NodeInfo(oi_for_convert)
-                if not getattr(oi_obj, "_autoflow_source", None):
-                    setattr(oi_obj, "_autoflow_source", "dict")
+                if not getattr(oi_obj, "_AUTOGRAPH_source", None):
+                    setattr(oi_obj, "_AUTOGRAPH_source", "dict")
                 oi_for_convert = oi_obj
             else:
                 from .convert import resolve_node_info_with_origin
@@ -1968,10 +1968,10 @@ class Flow(dict):
                     require_source=True,
                 )
                 oi_obj = NodeInfo(oi_dict or {})
-                setattr(oi_obj, "_autoflow_origin", origin)
+                setattr(oi_obj, "_AUTOGRAPH_origin", origin)
                 s = oi_obj.source
                 if isinstance(s, str) and s:
-                    setattr(oi_obj, "_autoflow_source", s)
+                    setattr(oi_obj, "_AUTOGRAPH_source", s)
                 oi_for_convert = oi_obj
 
         api = convert(
@@ -1981,13 +1981,13 @@ class Flow(dict):
             timeout=timeout,
             include_meta=include_meta,
             convert_callbacks=convert_callbacks,
-            disable_autoflow_meta=disable_autoflow_meta,
-            apply_autoflow_meta=apply_autoflow_meta,
+            disable_AUTOGRAPH_meta=disable_AUTOGRAPH_meta,
+            apply_AUTOGRAPH_meta=apply_AUTOGRAPH_meta,
         )
-        parent_src = getattr(self, "_autoflow_source", None)
+        parent_src = getattr(self, "_AUTOGRAPH_source", None)
         if isinstance(parent_src, str) and parent_src:
             try:
-                object.__setattr__(api, "_autoflow_source", f"converted_from({parent_src})")
+                object.__setattr__(api, "_AUTOGRAPH_source", f"converted_from({parent_src})")
             except Exception:
                 pass
         if map_callbacks is not None:
@@ -1997,14 +1997,14 @@ class Flow(dict):
             if isinstance(mapped, ApiFlow):
                 if isinstance(parent_src, str) and parent_src:
                     try:
-                        object.__setattr__(mapped, "_autoflow_source", f"converted_from({parent_src})")
+                        object.__setattr__(mapped, "_AUTOGRAPH_source", f"converted_from({parent_src})")
                     except Exception:
                         pass
                 return mapped
             out = ApiFlow(mapped, node_info=api.node_info, use_api=api.use_api, workflow_meta=api.workflow_meta)
             if isinstance(parent_src, str) and parent_src:
                 try:
-                    object.__setattr__(out, "_autoflow_source", f"converted_from({parent_src})")
+                    object.__setattr__(out, "_AUTOGRAPH_source", f"converted_from({parent_src})")
                 except Exception:
                     pass
             return out
@@ -2022,24 +2022,24 @@ class Flow(dict):
 
             oi_dict, _use_api, origin = resolve_node_info_with_origin(value, None, timeout, allow_env=True)
             oi_obj = NodeInfo(oi_dict or {})
-            setattr(oi_obj, "_autoflow_origin", origin)
+            setattr(oi_obj, "_AUTOGRAPH_origin", origin)
             s = oi_obj.source
             if isinstance(s, str) and s:
-                setattr(oi_obj, "_autoflow_source", s)
+                setattr(oi_obj, "_AUTOGRAPH_source", s)
             self.node_info = oi_obj
             return oi_obj
 
-        effective = server_url or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+        effective = server_url or os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
         if not effective:
             raise ValueError(
-                "Missing server_url. Pass server_url= or set AUTOFLOW_COMFYUI_SERVER_URL, "
+                "Missing server_url. Pass server_url= or set AUTOGRAPH_COMFYUI_SERVER_URL, "
                 "or pass a value to fetch_node_info(value=...) to load without a server."
             )
         oi_obj = NodeInfo(fetch_node_info(effective, timeout=timeout))
         from .origin import NodeInfoOrigin
 
-        setattr(oi_obj, "_autoflow_origin", NodeInfoOrigin(requested="fetch_node_info", resolved="server", effective_server_url=effective))
-        setattr(oi_obj, "_autoflow_source", f"server:{effective}")
+        setattr(oi_obj, "_AUTOGRAPH_origin", NodeInfoOrigin(requested="fetch_node_info", resolved="server", effective_server_url=effective))
+        setattr(oi_obj, "_AUTOGRAPH_source", f"server:{effective}")
         self.node_info = oi_obj
         return oi_obj
 
@@ -2053,8 +2053,8 @@ class Flow(dict):
         *,
         convert_callbacks: Optional[Union[Callable[[Dict[str, Any]], Any], Iterable[Callable[[Dict[str, Any]], Any]]]] = None,
         map_callbacks: Optional[Union[Callable[[Dict[str, Any]], Any], Iterable[Callable[[Dict[str, Any]], Any]]]] = None,
-        disable_autoflow_meta: bool = False,
-        apply_autoflow_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
+        disable_AUTOGRAPH_meta: bool = False,
+        apply_AUTOGRAPH_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
     ) -> ConvertResult:
         r = convert_workflow_with_errors(
             workflow_data=self,
@@ -2064,8 +2064,8 @@ class Flow(dict):
             include_meta=include_meta,
             output_file=None,
             convert_callbacks=convert_callbacks,
-            disable_autoflow_meta=disable_autoflow_meta,
-            apply_autoflow_meta=apply_autoflow_meta,
+            disable_AUTOGRAPH_meta=disable_AUTOGRAPH_meta,
+            apply_AUTOGRAPH_meta=apply_AUTOGRAPH_meta,
         )
         data = r.data if isinstance(r.data, ApiFlow) or r.data is None else ApiFlow(r.data)
         out = ConvertResult(
@@ -2232,11 +2232,11 @@ class NodeInfo(dict):
         Examples: "modules", "server:http://localhost:8188", "file:/abs/node_info.json",
         "json-string", "json-bytes", "dict", "env:modules", ...
         """
-        v = getattr(self, "_autoflow_source", None)
+        v = getattr(self, "_AUTOGRAPH_source", None)
         if isinstance(v, str) and v:
             return v
         # Back-compat: derive a best-effort source from origin metadata if present.
-        o = getattr(self, "_autoflow_origin", None)
+        o = getattr(self, "_AUTOGRAPH_origin", None)
         try:
             req = getattr(o, "requested", None)
             res = getattr(o, "resolved", None)
@@ -2274,10 +2274,10 @@ class NodeInfo(dict):
         """
         Best-effort origin metadata (if available).
 
-        When NodeInfo is created via autoflow's resolvers/fetch helpers, this is set to an
+        When NodeInfo is created via autograph's resolvers/fetch helpers, this is set to an
         `NodeInfoOrigin` instance. For manually constructed dicts, this may be missing/None.
         """
-        return getattr(self, "_autoflow_origin", None)
+        return getattr(self, "_AUTOGRAPH_origin", None)
 
     @classmethod
     def from_comfyui_modules(cls) -> "NodeInfo":
@@ -2286,8 +2286,8 @@ class NodeInfo(dict):
 
         oi = cls(node_info_from_comfyui_modules())
         root = _detect_comfyui_root_from_imports()
-        setattr(oi, "_autoflow_origin", NodeInfoOrigin(requested="modules", resolved="modules", modules_root=str(root) if root else None))
-        setattr(oi, "_autoflow_source", f"modules:{root}" if root else "modules")
+        setattr(oi, "_AUTOGRAPH_origin", NodeInfoOrigin(requested="modules", resolved="modules", modules_root=str(root) if root else None))
+        setattr(oi, "_AUTOGRAPH_source", f"modules:{root}" if root else "modules")
         return oi
 
     @classmethod
@@ -2304,8 +2304,8 @@ class NodeInfo(dict):
         effective_url = resolve_comfy_server_url(server_url)
         data = fetch_node_info(effective_url, timeout=timeout)
         oi = cls(data)
-        setattr(oi, "_autoflow_origin", NodeInfoOrigin(requested=server_url or "server_url", resolved="server", effective_server_url=effective_url))
-        setattr(oi, "_autoflow_source", f"server:{effective_url}")
+        setattr(oi, "_AUTOGRAPH_origin", NodeInfoOrigin(requested=server_url or "server_url", resolved="server", effective_server_url=effective_url))
+        setattr(oi, "_AUTOGRAPH_source", f"server:{effective_url}")
         if output_path is not None:
             oi.save(output_path)
         return oi
@@ -2355,9 +2355,9 @@ class NodeInfo(dict):
             raise ValueError("node_info must be a dict at top level")
         oi = cls(data)
         if origin is not None:
-            setattr(oi, "_autoflow_origin", origin)
+            setattr(oi, "_AUTOGRAPH_origin", origin)
         if isinstance(source, str) and source:
-            setattr(oi, "_autoflow_source", source)
+            setattr(oi, "_AUTOGRAPH_source", source)
         return oi
 
     def to_json(self, indent: int = DEFAULT_JSON_INDENT, ensure_ascii: bool = DEFAULT_JSON_ENSURE_ASCII) -> str:
@@ -2397,7 +2397,7 @@ class NodeInfo(dict):
                     continue
 
             dv = DictView(v)
-            object.__setattr__(dv, "_autoflow_addr", k)
+            object.__setattr__(dv, "_AUTOGRAPH_addr", k)
             out.append(dv)
         return out
 

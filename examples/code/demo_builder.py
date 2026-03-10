@@ -3,7 +3,7 @@
 This demo exercises every feature of the builder API.
 Run with: python examples/demo_builder.py
 
-Requires: node_info.json in the repo root (or set AUTOFLOW_COMFYUI_SERVER_URL)
+Requires: node_info.json in the repo root (or set AUTOGRAPH_COMFYUI_SERVER_URL)
 """
 
 import json
@@ -13,19 +13,19 @@ from pathlib import Path
 
 # ── Setup ────────────────────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from autoflow import Flow, NodeInfo, Connection
+from autograph import Flow, NodeInfo, Connection
 
 # Load node_info — try local file, then env server, then built-in test data
 ni_path = Path(__file__).resolve().parents[1] / "node-info.json"
 if ni_path.exists():
     ni = NodeInfo(json.loads(ni_path.read_text(encoding="utf-8")))
     print(f"✅ Loaded node_info from {ni_path.name} ({len(dict(ni))} types)\n")
-elif os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL"):
+elif os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL"):
     ni = NodeInfo("fetch")
     print(f"✅ Fetched node_info from server ({len(dict(ni))} types)\n")
 else:
     print("⚠️  No node_info.json found and no server URL set.")
-    print("   Place node-info.json in repo root or set AUTOFLOW_COMFYUI_SERVER_URL\n")
+    print("   Place node-info.json in repo root or set AUTOGRAPH_COMFYUI_SERVER_URL\n")
     sys.exit(1)
 
 
@@ -246,7 +246,7 @@ print(f"   c.from_class_type = {c.from_class_type}")
 # ═══════════════════════════════════════════════════════════════════════════
 section("13. Connection helpers — Inspect node_info")
 
-from autoflow.connection import (
+from autograph.connection import (
     get_connection_input_names,
     get_output_slots,
     get_all_input_names,

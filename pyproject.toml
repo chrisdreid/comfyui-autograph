@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "comfyui-autoflow"
+name = "comfyui-autograph"
 dynamic = ["version"]
 description = "Pure Python automation for ComfyUI: convert workflows, submit jobs, fetch images—no GUI required"
 readme = "README.md"
@@ -36,19 +36,19 @@ keywords = [
 pillow = ["pillow"]
 
 [project.urls]
-Homepage = "https://github.com/chrisdreid/comfyui-autoflow"
-Documentation = "https://github.com/chrisdreid/comfyui-autoflow#readme"
-Repository = "https://github.com/chrisdreid/comfyui-autoflow"
-Issues = "https://github.com/chrisdreid/comfyui-autoflow/issues"
+Homepage = "https://github.com/chrisdreid/comfyui-autograph"
+Documentation = "https://github.com/chrisdreid/comfyui-autograph#readme"
+Repository = "https://github.com/chrisdreid/comfyui-autograph"
+Issues = "https://github.com/chrisdreid/comfyui-autograph/issues"
 
 [project.scripts]
-autoflow = "autoflow.cli:main"
+autograph = "autograph.cli:main"
 
 [tool.setuptools.dynamic]
-version = {attr = "autoflow.version.__version__"}
+version = {attr = "autograph.version.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["autoflow*"]
+include = ["autograph*"]
 
 [tool.setuptools.package-data]
-autoflow = ["py.typed"]
+autograph = ["py.typed"]

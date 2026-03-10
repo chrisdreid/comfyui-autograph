@@ -61,21 +61,21 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # -----------------------------------------------------------------------
 
     def t_1_1():
-        import autoflow  # noqa: F401
-        return {"input": "import autoflow", "output": f"module: {autoflow.__file__}", "result": "OK"}
-    _run_test(collector, stage, "1.1", "import autoflow", t_1_1)
+        import autograph  # noqa: F401
+        return {"input": "import autograph", "output": f"module: {autograph.__file__}", "result": "OK"}
+    _run_test(collector, stage, "1.1", "import autograph", t_1_1)
 
     def t_1_2():
-        import autoflow
-        v = autoflow.__version__
+        import autograph
+        v = autograph.__version__
         assert isinstance(v, str) and len(v) > 0, f"Bad version: {v!r}"
         parts = v.split(".")
         assert len(parts) >= 2, f"Version has fewer than 2 parts: {v}"
-        return {"input": "autoflow.__version__", "output": v, "result": f"✓ semver {'.'.join(parts)}"}
-    _run_test(collector, stage, "1.2", "autoflow.__version__ valid", t_1_2)
+        return {"input": "autograph.__version__", "output": v, "result": f"✓ semver {'.'.join(parts)}"}
+    _run_test(collector, stage, "1.2", "autograph.__version__ valid", t_1_2)
 
     def t_1_3():
-        import autoflow
+        import autograph
         expected = [
             "Flow", "ApiFlow", "Workflow", "NodeInfo",
             "convert", "convert_with_errors",
@@ -83,7 +83,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
             "WsEvent", "ProgressPrinter", "WidgetValue",
             "ConvertResult", "SubmissionResult", "ImagesResult", "ImageResult",
         ]
-        missing = [s for s in expected if not hasattr(autoflow, s)]
+        missing = [s for s in expected if not hasattr(autograph, s)]
         assert not missing, f"Missing public API symbols: {missing}"
         return {
             "input": f"{len(expected)} expected symbols",
@@ -93,7 +93,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "1.3", "All public API symbols exist", t_1_3)
 
     def t_1_4():
-        from autoflow import Flow
+        from autograph import Flow
         assert _BUNDLED_WORKFLOW.exists(), f"Bundled workflow not found: {_BUNDLED_WORKFLOW}"
         f = Flow.load(str(_BUNDLED_WORKFLOW))
         assert f is not None, "Flow.load returned None"
@@ -105,7 +105,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "1.4", "Bundled workflow.json loads", t_1_4)
 
     def t_1_5():
-        from autoflow import NodeInfo
+        from autograph import NodeInfo
         ni = NodeInfo(BUILTIN_NODE_INFO)
         assert ni is not None, "NodeInfo returned None"
         types = ["KSampler", "CLIPTextEncode", "CheckpointLoaderSimple",
@@ -124,48 +124,48 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # -----------------------------------------------------------------------
 
     def t_1_6():
-        code = "from autoflow import Flow; import inspect; print(Flow.__module__)"
-        mod = _run_code(code, {"AUTOFLOW_MODEL_LAYER": ""})
-        assert mod == "autoflow.flowtree", f"Default module = {mod!r}"
+        code = "from autograph import Flow; import inspect; print(Flow.__module__)"
+        mod = _run_code(code, {"AUTOGRAPH_MODEL_LAYER": ""})
+        assert mod == "autograph.flowtree", f"Default module = {mod!r}"
         return {
-            "input": "AUTOFLOW_MODEL_LAYER='' → Flow.__module__",
+            "input": "AUTOGRAPH_MODEL_LAYER='' → Flow.__module__",
             "output": mod,
             "result": "✓ default is flowtree",
         }
     _run_test(collector, stage, "1.6", "Default model layer is flowtree", t_1_6)
 
     def t_1_7():
-        code = "from autoflow import Flow; print(Flow.__module__)"
-        mod = _run_code(code, {"AUTOFLOW_MODEL_LAYER": "models"})
-        assert mod == "autoflow.models", f"models module = {mod!r}"
+        code = "from autograph import Flow; print(Flow.__module__)"
+        mod = _run_code(code, {"AUTOGRAPH_MODEL_LAYER": "models"})
+        assert mod == "autograph.models", f"models module = {mod!r}"
         return {
-            "input": "AUTOFLOW_MODEL_LAYER='models'",
+            "input": "AUTOGRAPH_MODEL_LAYER='models'",
             "output": mod,
             "result": "✓ models layer active",
         }
-    _run_test(collector, stage, "1.7", "AUTOFLOW_MODEL_LAYER=models", t_1_7)
+    _run_test(collector, stage, "1.7", "AUTOGRAPH_MODEL_LAYER=models", t_1_7)
 
     def t_1_8():
-        code = "from autoflow import Flow; print(Flow.__module__)"
-        mod = _run_code(code, {"AUTOFLOW_MODEL_LAYER": "flowtree"})
-        assert mod == "autoflow.flowtree", f"flowtree module = {mod!r}"
+        code = "from autograph import Flow; print(Flow.__module__)"
+        mod = _run_code(code, {"AUTOGRAPH_MODEL_LAYER": "flowtree"})
+        assert mod == "autograph.flowtree", f"flowtree module = {mod!r}"
         return {
-            "input": "AUTOFLOW_MODEL_LAYER='flowtree'",
+            "input": "AUTOGRAPH_MODEL_LAYER='flowtree'",
             "output": mod,
             "result": "✓ flowtree explicit",
         }
-    _run_test(collector, stage, "1.8", "AUTOFLOW_MODEL_LAYER=flowtree", t_1_8)
+    _run_test(collector, stage, "1.8", "AUTOGRAPH_MODEL_LAYER=flowtree", t_1_8)
 
     def t_1_9():
-        code = "import autoflow"
+        code = "import autograph"
         try:
-            _run_code(code, {"AUTOFLOW_MODEL_LAYER": "nope"})
+            _run_code(code, {"AUTOGRAPH_MODEL_LAYER": "nope"})
             assert False, "Should have raised CalledProcessError"
         except subprocess.CalledProcessError as e:
             output = e.output.decode("utf-8", errors="replace")
-            assert "AUTOFLOW_MODEL_LAYER must be" in output
+            assert "AUTOGRAPH_MODEL_LAYER must be" in output
             return {
-                "input": "AUTOFLOW_MODEL_LAYER='nope'",
+                "input": "AUTOGRAPH_MODEL_LAYER='nope'",
                 "output": "CalledProcessError raised",
                 "result": "✓ fails fast with message",
             }
@@ -175,7 +175,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # 1.10 – 1.14  Error handling  (was stage 19)
     # -----------------------------------------------------------------------
 
-    from autoflow import convert_with_errors, Flow
+    from autograph import convert_with_errors, Flow
 
     def t_1_10():
         invalid = {"last_node_id": 1, "last_link_id": 0, "nodes": [

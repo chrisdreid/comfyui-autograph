@@ -1,4 +1,4 @@
-"""autoflow.connection
+"""autograph.connection
 
 Shared primitives for workflow connection inspection and manipulation.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 r"""
-docs-test.py — docs example harness for autoflow
+docs-test.py — docs example harness for autograph
 
 This script is intentionally *docs-driven*: it parses every markdown file in `docs/`
 and turns each fenced code block into a runnable Python function registered under a label.
@@ -19,7 +19,7 @@ HOW TO RUN THE SCRIPT (with ComfyUI server)
 >> python examples/code/docs-test.py --mode online --prompt-env --exec-python --run-cli --strict-network
 
 # Scripted/non-interactive (no prompts) via args (args → env → defaults):
->> python examples/code/docs-test.py --mode online --server-url http://localhost:8188 --timeout 30 --wait-timeout 60 --poll-interval 0.5 --client-id autoflow --exec-python --run-cli
+>> python examples/code/docs-test.py --mode online --server-url http://localhost:8188 --timeout 30 --wait-timeout 60 --poll-interval 0.5 --client-id autograph --exec-python --run-cli
 
 # If you want to use your own workflows
 # Pass paths:
@@ -152,12 +152,12 @@ DEFAULT_IMAGE = REPO_ROOT / "comfyui-image.png"
 
 # Known fixture fallback locations (checked in order)
 _FIXTURE_CANDIDATES = [
-    REPO_ROOT / "autoflow-test-suite" / "fixtures" / "logo-basic",
+    REPO_ROOT / "autograph-test-suite" / "fixtures" / "logo-basic",
     REPO_ROOT / "fixtures" / "logo-basic",
 ]
 
 # Bundled workflow inside the package (last resort for default.json)
-_BUNDLED_WORKFLOW = REPO_ROOT / "autoflow" / "data" / "bundled-workflow.json"
+_BUNDLED_WORKFLOW = REPO_ROOT / "autograph" / "data" / "bundled-workflow.json"
 
 # Ensure repo-local imports work when running this script directly.
 # (When a script is executed, sys.path[0] is the script directory, not the repo root.)
@@ -365,9 +365,9 @@ def _looks_pseudo_or_frameworky_python(text: str) -> bool:
     if "FastAPI" in t or "HTTPException" in t or "JSONResponse" in t:
         # Usually shown as wiring example; may be incomplete in docs.
         return True
-    # Doc snippets that use autoflow.xxx() without importing the module
+    # Doc snippets that use autograph.xxx() without importing the module
     # (illustrative API patterns, not self-contained snippets).
-    if re.search(r"\bautoflow\.\w+\(", t):
+    if re.search(r"\bautograph\.\w+\(", t):
         return True
     return False
 
@@ -602,8 +602,8 @@ def _make_sandbox(
 
     if make_api_payload:
         # Create workflow-api.json using offline conversion.
-        # Import locally to keep this script usable even if autoflow isn't installed (repo-local usage).
-        from autoflow import ApiFlow  # type: ignore
+        # Import locally to keep this script usable even if autograph isn't installed (repo-local usage).
+        from autograph import ApiFlow  # type: ignore
 
         api = ApiFlow(str(wf), node_info=str(oi))
         api.save(str(wf_api))
@@ -696,7 +696,7 @@ def _bash_to_python_argv(line: str) -> Optional[List[str]]:
     Convert a bash-ish command line into argv for subprocess, but only for safe patterns.
 
     We only accept:
-    - `python -m autoflow ...`
+    - `python -m autograph ...`
     - `python <somefile.py> ...`
     And we replace `python` with `sys.executable`.
     """
@@ -908,7 +908,7 @@ def _run_bash_block(
         else:
             cwd = REPO_ROOT
 
-        # Ensure `python -m autoflow` works even when cwd is sandbox_dir.
+        # Ensure `python -m autograph` works even when cwd is sandbox_dir.
         env = os.environ.copy()
         pp = env.get("PYTHONPATH", "")
         root_s = str(REPO_ROOT)
@@ -920,10 +920,10 @@ def _run_bash_block(
 
         # Optionally pass server URL via env (so docs snippets can omit --server-url).
         if server_url:
-            env["AUTOFLOW_COMFYUI_SERVER_URL"] = server_url
+            env["AUTOGRAPH_COMFYUI_SERVER_URL"] = server_url
         else:
             # If we're not explicitly setting a server URL for this run, do not leak one into subprocesses.
-            env.pop("AUTOFLOW_COMFYUI_SERVER_URL", None)
+            env.pop("AUTOGRAPH_COMFYUI_SERVER_URL", None)
 
         print("[bash] run:", cmd)
         rc = _run_subprocess(argv, cwd=cwd, env=env)
@@ -948,9 +948,9 @@ def e2e_server_roundtrip(
     workflow: Path = DEFAULT_WORKFLOW,
     workflow_url: str = "",
     out: Optional[Path] = None,
-    prompt_text: str = "A beautiful cinematic scene about autoflow, high quality, detailed",
+    prompt_text: str = "A beautiful cinematic scene about autograph, high quality, detailed",
     fixed_seed: int = 123,
-    client_id: str = "autoflow-docs-test",
+    client_id: str = "autograph-docs-test",
     timeout_s: int = 30,
     wait_timeout_s: int = 180,
     poll_interval_s: float = 0.5,
@@ -963,7 +963,7 @@ def e2e_server_roundtrip(
     Steps:
     1) Fetch /object_info from server (sandboxed node_info.json).
     2) Load a template workflow.json (repo default by default, or workflow_url if provided).
-    3) Convert -> ApiFlow, set prompt to a autoflow-themed scene, set fixed seed.
+    3) Convert -> ApiFlow, set prompt to a autograph-themed scene, set fixed seed.
     4) Submit, wait, fetch output images, save first image.
     5) Extract Flow from the saved PNG, convert again, submit again.
     6) Save second image and print SHA256 hashes so a user can verify they match.
@@ -972,16 +972,16 @@ def e2e_server_roundtrip(
     - Exact byte-for-byte matches depend on server determinism. This prints both hashes and paths for manual inspection.
     """
     # This repo is often tested without a ComfyUI server; keep network/e2e explicitly opt-in.
-    if not os.environ.get("AUTOFLOW_DOCS_E2E"):
+    if not os.environ.get("AUTOGRAPH_DOCS_E2E"):
         if strict:
-            raise RuntimeError("E2E docs tests are disabled by default (set AUTOFLOW_DOCS_E2E=1 to enable).")
-        print("[net] SKIP: e2e/server-roundtrip disabled (set AUTOFLOW_DOCS_E2E=1 to enable).")
+            raise RuntimeError("E2E docs tests are disabled by default (set AUTOGRAPH_DOCS_E2E=1 to enable).")
+        print("[net] SKIP: e2e/server-roundtrip disabled (set AUTOGRAPH_DOCS_E2E=1 to enable).")
         return
-    server_url2 = (server_url or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL", "")).strip()
+    server_url2 = (server_url or os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL", "")).strip()
     if not server_url2:
-        server_url2 = _prompt_env_var("AUTOFLOW_COMFYUI_SERVER_URL", default="http://localhost:8188", prompt=prompt_env) or ""
+        server_url2 = _prompt_env_var("AUTOGRAPH_COMFYUI_SERVER_URL", default="http://localhost:8188", prompt=prompt_env) or ""
     if not server_url2:
-        raise ValueError("Missing ComfyUI server URL (set AUTOFLOW_COMFYUI_SERVER_URL or pass --server-url)")
+        raise ValueError("Missing ComfyUI server URL (set AUTOGRAPH_COMFYUI_SERVER_URL or pass --server-url)")
 
     if not _server_reachable(server_url2, timeout_s=1.0):
         msg = f"ComfyUI server not reachable: {server_url2}"
@@ -1018,7 +1018,7 @@ def e2e_server_roundtrip(
     sb_wf.write_text(_read_text(wf_path), encoding="utf-8")
 
     # Import locally (repo-local usage).
-    from autoflow import ApiFlow, Flow  # type: ignore
+    from autograph import ApiFlow, Flow  # type: ignore
 
     def _apply_prompt_and_seed(api: Dict[str, Any]) -> Dict[str, Any]:
         a = api if isinstance(api, ApiFlow) else ApiFlow(api, node_info=str(oi_path))
@@ -1168,13 +1168,13 @@ def _register_doc_blocks(
                     if allow_network and needs_network and not _snippet_has_explicit_server_url(_code, lang=_lang):
                         if not server_url2 and not prompt_env:
                             print(
-                                "[net] SKIP: needs server URL. Set AUTOFLOW_COMFYUI_SERVER_URL, pass --server-url, "
+                                "[net] SKIP: needs server URL. Set AUTOGRAPH_COMFYUI_SERVER_URL, pass --server-url, "
                                 "or rerun with --prompt-env."
                             )
                             return
                         if not server_url2:
                             server_url2 = _prompt_env_var(
-                                "AUTOFLOW_COMFYUI_SERVER_URL",
+                                "AUTOGRAPH_COMFYUI_SERVER_URL",
                                 default="http://localhost:8188",
                                 prompt=prompt_env,
                             )
@@ -1202,15 +1202,15 @@ def _register_doc_blocks(
 
                         env_patch: Dict[str, Optional[str]] = {}
                         if server_url2:
-                            env_patch["AUTOFLOW_COMFYUI_SERVER_URL"] = server_url2
+                            env_patch["AUTOGRAPH_COMFYUI_SERVER_URL"] = server_url2
                         if timeout_s:
-                            env_patch["AUTOFLOW_TIMEOUT_S"] = str(timeout_s)
+                            env_patch["AUTOGRAPH_TIMEOUT_S"] = str(timeout_s)
                         if wait_timeout_s:
-                            env_patch["AUTOFLOW_WAIT_TIMEOUT_S"] = str(wait_timeout_s)
+                            env_patch["AUTOGRAPH_WAIT_TIMEOUT_S"] = str(wait_timeout_s)
                         if poll_interval_s:
-                            env_patch["AUTOFLOW_POLL_INTERVAL_S"] = str(poll_interval_s)
+                            env_patch["AUTOGRAPH_POLL_INTERVAL_S"] = str(poll_interval_s)
                         if submit_client_id:
-                            env_patch["AUTOFLOW_SUBMIT_CLIENT_ID"] = str(submit_client_id)
+                            env_patch["AUTOGRAPH_SUBMIT_CLIENT_ID"] = str(submit_client_id)
 
                         if _lang == "python":
                             _run_python_block(
@@ -1264,7 +1264,7 @@ def _register_doc_blocks(
 
     # Add a hand-written E2E test (not derived from docs fences).
     # Keep it explicitly opt-in so docs/tests never hit a live ComfyUI server by default.
-    if os.environ.get("AUTOFLOW_DOCS_E2E"):
+    if os.environ.get("AUTOGRAPH_DOCS_E2E"):
         EXAMPLES["e2e/server-roundtrip"] = Example(
             label="e2e/server-roundtrip",
             fn_name="e2e_server_roundtrip",
@@ -1311,18 +1311,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default="auto",
         help="auto: online only if server URL is available; offline: never run network blocks; online: allow network blocks",
     )
-    p.add_argument("--server-url", default="", help="ComfyUI server URL (sets AUTOFLOW_COMFYUI_SERVER_URL for examples)")
-    p.add_argument("--timeout", default="", help="Default HTTP timeout seconds (AUTOFLOW_TIMEOUT_S)")
-    p.add_argument("--wait-timeout", default="", help="Default wait timeout seconds (AUTOFLOW_WAIT_TIMEOUT_S)")
-    p.add_argument("--poll-interval", default="", help="Default poll interval seconds (AUTOFLOW_POLL_INTERVAL_S)")
-    p.add_argument("--client-id", default="", help="Default submit client_id (AUTOFLOW_SUBMIT_CLIENT_ID)")
+    p.add_argument("--server-url", default="", help="ComfyUI server URL (sets AUTOGRAPH_COMFYUI_SERVER_URL for examples)")
+    p.add_argument("--timeout", default="", help="Default HTTP timeout seconds (AUTOGRAPH_TIMEOUT_S)")
+    p.add_argument("--wait-timeout", default="", help="Default wait timeout seconds (AUTOGRAPH_WAIT_TIMEOUT_S)")
+    p.add_argument("--poll-interval", default="", help="Default poll interval seconds (AUTOGRAPH_POLL_INTERVAL_S)")
+    p.add_argument("--client-id", default="", help="Default submit client_id (AUTOGRAPH_SUBMIT_CLIENT_ID)")
     p.add_argument("--workflow-url", default="", help="Optional URL to a workflow.json template (downloaded via stdlib)")
-    p.add_argument("--prompt-text", default="", help="Prompt override for E2E test (autoflow-themed)")
+    p.add_argument("--prompt-text", default="", help="Prompt override for E2E test (autograph-themed)")
     p.add_argument("--seed", default="", help="Fixed seed for E2E test")
     p.add_argument(
         "--prompt-env",
         action="store_true",
-        help="Interactively prompt for missing AUTOFLOW_* env vars (TTY-only).",
+        help="Interactively prompt for missing AUTOGRAPH_* env vars (TTY-only).",
     )
     p.add_argument(
         "--strict-network",
@@ -1385,30 +1385,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     out = Path(ns.out).expanduser().resolve()
 
     # Resolve defaults (args -> env -> hard default).
-    # Note: We keep values as strings because autoflow parses env vars itself.
-    server_url_default = (ns.server_url or "").strip() or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL", "").strip() or ""
-    timeout_default = (ns.timeout or "").strip() or os.environ.get("AUTOFLOW_TIMEOUT_S", "").strip() or "30"
-    wait_timeout_default = (ns.wait_timeout or "").strip() or os.environ.get("AUTOFLOW_WAIT_TIMEOUT_S", "").strip() or "60"
-    poll_interval_default = (ns.poll_interval or "").strip() or os.environ.get("AUTOFLOW_POLL_INTERVAL_S", "").strip() or "0.5"
-    client_id_default = (ns.client_id or "").strip() or os.environ.get("AUTOFLOW_SUBMIT_CLIENT_ID", "").strip() or "autoflow"
+    # Note: We keep values as strings because autograph parses env vars itself.
+    server_url_default = (ns.server_url or "").strip() or os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL", "").strip() or ""
+    timeout_default = (ns.timeout or "").strip() or os.environ.get("AUTOGRAPH_TIMEOUT_S", "").strip() or "30"
+    wait_timeout_default = (ns.wait_timeout or "").strip() or os.environ.get("AUTOGRAPH_WAIT_TIMEOUT_S", "").strip() or "60"
+    poll_interval_default = (ns.poll_interval or "").strip() or os.environ.get("AUTOGRAPH_POLL_INTERVAL_S", "").strip() or "0.5"
+    client_id_default = (ns.client_id or "").strip() or os.environ.get("AUTOGRAPH_SUBMIT_CLIENT_ID", "").strip() or "autograph"
 
     # Optional interactive prompting (TTY-only). If stdin isn't a TTY, this is a no-op fallback.
     prompted = _prompt_env_many(
         [
-            ("AUTOFLOW_COMFYUI_SERVER_URL", server_url_default or "http://localhost:8188"),
-            ("AUTOFLOW_TIMEOUT_S", timeout_default),
-            ("AUTOFLOW_WAIT_TIMEOUT_S", wait_timeout_default),
-            ("AUTOFLOW_POLL_INTERVAL_S", poll_interval_default),
-            ("AUTOFLOW_SUBMIT_CLIENT_ID", client_id_default),
+            ("AUTOGRAPH_COMFYUI_SERVER_URL", server_url_default or "http://localhost:8188"),
+            ("AUTOGRAPH_TIMEOUT_S", timeout_default),
+            ("AUTOGRAPH_WAIT_TIMEOUT_S", wait_timeout_default),
+            ("AUTOGRAPH_POLL_INTERVAL_S", poll_interval_default),
+            ("AUTOGRAPH_SUBMIT_CLIENT_ID", client_id_default),
         ],
         prompt=bool(ns.prompt_env),
     )
 
-    server_url = (prompted.get("AUTOFLOW_COMFYUI_SERVER_URL") or server_url_default).strip()
-    timeout_s = prompted.get("AUTOFLOW_TIMEOUT_S") or timeout_default
-    wait_timeout_s = prompted.get("AUTOFLOW_WAIT_TIMEOUT_S") or wait_timeout_default
-    poll_interval_s = prompted.get("AUTOFLOW_POLL_INTERVAL_S") or poll_interval_default
-    submit_client_id = prompted.get("AUTOFLOW_SUBMIT_CLIENT_ID") or client_id_default
+    server_url = (prompted.get("AUTOGRAPH_COMFYUI_SERVER_URL") or server_url_default).strip()
+    timeout_s = prompted.get("AUTOGRAPH_TIMEOUT_S") or timeout_default
+    wait_timeout_s = prompted.get("AUTOGRAPH_WAIT_TIMEOUT_S") or wait_timeout_default
+    poll_interval_s = prompted.get("AUTOGRAPH_POLL_INTERVAL_S") or poll_interval_default
+    submit_client_id = prompted.get("AUTOGRAPH_SUBMIT_CLIENT_ID") or client_id_default
 
     if ns.mode == "offline":
         allow_network = False

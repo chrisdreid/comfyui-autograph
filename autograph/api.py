@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""autoflow.api
+"""autograph.api
 
 Thin compatibility façade.
 
 The implementation was split across:
-- autoflow.models   (Flow/ApiFlow/NodeInfo/Workflow + drilling helpers)
-- autoflow.convert  (conversion core + errors)
-- autoflow.results  (submit + outputs + save helpers)
-- autoflow.net/pngmeta/defaults (stdlib helpers)
+- autograph.models   (Flow/ApiFlow/NodeInfo/Workflow + drilling helpers)
+- autograph.convert  (conversion core + errors)
+- autograph.results  (submit + outputs + save helpers)
+- autograph.net/pngmeta/defaults (stdlib helpers)
 
 This module re-exports the public API for backwards compatibility.
 """
@@ -66,7 +66,7 @@ from .results import (  # noqa: F401
     ImageResult,
 )
 
-# Helpers that were historically reachable from autoflow.api
+# Helpers that were historically reachable from autograph.api
 from .defaults import (  # noqa: F401
     DEFAULT_HTTP_TIMEOUT_S,
     DEFAULT_POLL_INTERVAL_S,

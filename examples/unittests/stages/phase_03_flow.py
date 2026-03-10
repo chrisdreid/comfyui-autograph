@@ -30,7 +30,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Flow, ApiFlow
+    from autograph import Flow, ApiFlow
 
     wf_path = str(_BUNDLED_WORKFLOW)
     wf_json = _BUNDLED_WORKFLOW.read_text(encoding="utf-8")
@@ -331,7 +331,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "3.32", "flow.nodes.to_list()/to_dict()", t_3_32)
 
     def t_3_33():
-        from autoflow import ApiFlow
+        from autograph import ApiFlow
         api = f.convert(node_info=BUILTIN_NODE_INFO)
         assert isinstance(api, ApiFlow), f"convert() returned {type(api)}"
         assert len(api) > 0, "Converted ApiFlow is empty"
@@ -376,7 +376,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "3.38", "Round-trip: Flow(flow.to_json())", t_3_38)
 
     def t_3_39():
-        with open(wf_path, "r") as fh:
+        with open(wf_path, "r", encoding="utf-8") as fh:
             d = json.load(fh)
         f2 = Flow(d)
         assert len(f2.nodes) > 0, "Flow from dict has no nodes"
@@ -627,7 +627,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # 3.69–3.83  WidgetValue  (was stage 11)
     # ===================================================================
 
-    from autoflow.models import WidgetValue
+    from autograph.models import WidgetValue
 
     wv_int = WidgetValue(42)
     wv_float = WidgetValue(3.14)
@@ -735,7 +735,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # 3.84–3.93  DictView / ListView  (was stage 14)
     # ===================================================================
 
-    from autoflow.models import DictView, ListView
+    from autograph.models import DictView, ListView
 
     def t_3_84():
         d = {"foo": 1, "bar": "baz"}

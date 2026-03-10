@@ -1,4 +1,4 @@
-# Dot Accessor Improvements — Implementation Plan
+﻿# Dot Accessor Improvements — Implementation Plan
 
 ## Overview
 
@@ -12,16 +12,16 @@ Improve the Flow API so that accessing nodes and their widgets is intuitive, dis
 
 ### Problem
 
-`AUTOFLOW_COMFYUI_SERVER_URL` is set but `Flow` doesn't auto-fetch from it. The resolution chain skips this env var unless `AUTOFLOW_NODE_INFO_SOURCE` is also set.
+`AUTOGRAPH_COMFYUI_SERVER_URL` is set but `Flow` doesn't auto-fetch from it. The resolution chain skips this env var unless `AUTOGRAPH_NODE_INFO_SOURCE` is also set.
 
 ### Fix
 
-Add `AUTOFLOW_COMFYUI_SERVER_URL` as a final fallback in `resolve_node_info_with_origin()` before returning `None`:
+Add `AUTOGRAPH_COMFYUI_SERVER_URL` as a final fallback in `resolve_node_info_with_origin()` before returning `None`:
 
 ```python
 # convert.py — resolution chain (after existing checks):
 if allow_env:
-    env_server = os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL", "").strip()
+    env_server = os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL", "").strip()
     if env_server:
         return fetch_node_info(env_server, timeout), True, ...
 ```
@@ -32,7 +32,7 @@ When node_info still resolves to `None`, emit a warning:
 warnings.warn(
     "Flow created without node_info — widget access and tab completion limited.\n"
     "Options:\n"
-    "  • Set AUTOFLOW_COMFYUI_SERVER_URL env var (auto-fetches)\n"
+    "  • Set AUTOGRAPH_COMFYUI_SERVER_URL env var (auto-fetches)\n"
     "  • Pass node_info= to Flow()\n"
     "  • Call flow.fetch_node_info(server_url=...)\n"
     "See: docs/troubleshooting.md",
@@ -42,8 +42,8 @@ warnings.warn(
 
 ### Files
 
-- `autoflow/convert.py` — add server URL fallback in resolution chain
-- `autoflow/flowtree.py` — emit warning in `Flow.__init__` when degraded
+- `autograph/convert.py` — add server URL fallback in resolution chain
+- `autograph/flowtree.py` — emit warning in `Flow.__init__` when degraded
 
 ---
 
@@ -54,17 +54,17 @@ Mechanical rename across the entire codebase. Nobody is using this externally ye
 | Old | New |
 |---|---|
 | `NodeInfo` class | `NodeInfo` |
-| `AUTOFLOW_NODE_INFO_SOURCE` env var | `AUTOFLOW_NODE_INFO_SOURCE` |
+| `AUTOGRAPH_NODE_INFO_SOURCE` env var | `AUTOGRAPH_NODE_INFO_SOURCE` |
 | `node_info=` params | `node_info=` |
 | `flow.node_info` | `flow.node_info` |
 | `fetch_node_info()` | `fetch_node_info()` |
 | All internal function/variable names | `node_info` equivalent |
 
-Old env var `AUTOFLOW_NODE_INFO_SOURCE` kept as a fallback alias for transition.
+Old env var `AUTOGRAPH_NODE_INFO_SOURCE` kept as a fallback alias for transition.
 
 ### Files
 
-All files in `autoflow/`, all tests in `examples/unittests/`, all docs, example code.
+All files in `autograph/`, all tests in `examples/unittests/`, all docs, example code.
 
 ---
 
@@ -117,8 +117,8 @@ Carries `_spec` (the node_info input spec) and `_name` (widget name) as hidden a
 
 ### Files
 
-- `autoflow/models.py` — `WidgetValue` class, modify `FlowNodeProxy.__getattr__`
-- `autoflow/flowtree.py` — expose via `NodeRef.__getattr__` delegation (already works)
+- `autograph/models.py` — `WidgetValue` class, modify `FlowNodeProxy.__getattr__`
+- `autograph/flowtree.py` — expose via `NodeRef.__getattr__` delegation (already works)
 
 ---
 
@@ -148,7 +148,7 @@ When `node_info` is unavailable, falls back to showing raw node keys (current be
 
 ### Files
 
-- `autoflow/flowtree.py` — `NodeRef.__repr__`, `NodeRef.__str__`, `NodeSet.__repr__`, `NodeSet.__str__`
+- `autograph/flowtree.py` — `NodeRef.__repr__`, `NodeRef.__str__`, `NodeSet.__repr__`, `NodeSet.__str__`
 
 ---
 
@@ -168,8 +168,8 @@ These remain fully accessible (e.g. `node.inputs` works), just not shown in tab 
 
 ### Files
 
-- `autoflow/models.py` — `FlowNodeProxy.__dir__()` / `FlowNodeProxy.attrs()`
-- `autoflow/flowtree.py` — `NodeRef.__dir__()`
+- `autograph/models.py` — `FlowNodeProxy.__dir__()` / `FlowNodeProxy.attrs()`
+- `autograph/flowtree.py` — `NodeRef.__dir__()`
 
 ---
 
@@ -179,16 +179,16 @@ Clean API for per-node metadata that auto-stores to workspace `extra`:
 
 ```python
 n = f.nodes.ksampler[0]
-n.meta.my_tag = "production"      # stores to extra.autoflow.meta.nodes["7"]["my_tag"]
+n.meta.my_tag = "production"      # stores to extra.autograph.meta.nodes["7"]["my_tag"]
 n.meta.priority = 1
 print(n.meta.my_tag)              # "production"
 ```
 
-Currently `NodeRef.__getattr__("meta")` returns a `DictView` of `node["_meta"]`. Extend to auto-create the storage path in `workflow["extra"]["autoflow"]["meta"]["nodes"][str(node_id)]` on write.
+Currently `NodeRef.__getattr__("meta")` returns a `DictView` of `node["_meta"]`. Extend to auto-create the storage path in `workflow["extra"]["autograph"]["meta"]["nodes"][str(node_id)]` on write.
 
 ### Files
 
-- `autoflow/flowtree.py` — `NodeRef.__getattr__` meta handling
+- `autograph/flowtree.py` — `NodeRef.__getattr__` meta handling
 
 ---
 
@@ -197,7 +197,7 @@ Currently `NodeRef.__getattr__("meta")` returns a `DictView` of `node["_meta"]`.
 | Phase | Feature | Difficulty |
 |---|---|---|
 | 1 | Rename `node_info` → `node_info` | Medium (mechanical) |
-| 2 | Auto-resolve from `AUTOFLOW_COMFYUI_SERVER_URL` + warning | Low |
+| 2 | Auto-resolve from `AUTOGRAPH_COMFYUI_SERVER_URL` + warning | Low |
 | 3 | `WidgetValue` wrapper (`.choices()`, `.tooltip()`) | Medium |
 | 4 | `__repr__`/`__str__` = path-keyed dict | Low |
 | 5 | Filtered `__dir__` | Low |

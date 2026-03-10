@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-harness.py — Shared test infrastructure for the autoflow modular test suite.
+harness.py — Shared test infrastructure for the autograph modular test suite.
 
 Provides:
 - TestResult / ResultCollector / _run_test  — core test framework
@@ -45,11 +45,11 @@ def fixture_dir() -> Path:
     Return the directory containing JSON fixtures for offline tests.
 
     Resolution order:
-    - env AUTOFLOW_TESTDATA_DIR
+    - env AUTOGRAPH_TESTDATA_DIR
     - repo-root / _testdata   (local, should be gitignored)
     - ../data                 (common layout when this repo lives next to ComfyUI)
     """
-    env = os.environ.get("AUTOFLOW_TESTDATA_DIR")
+    env = os.environ.get("AUTOGRAPH_TESTDATA_DIR")
     if isinstance(env, str) and env.strip():
         p = Path(env).expanduser().resolve()
         if p.is_dir():
@@ -73,7 +73,7 @@ def fixture_dir() -> Path:
         cur = cur.parent if cur.parent != cur else None
 
     raise RuntimeError(
-        "Offline test fixtures not found. Set AUTOFLOW_TESTDATA_DIR, or create ./_testdata/, "
+        "Offline test fixtures not found. Set AUTOGRAPH_TESTDATA_DIR, or create ./_testdata/, "
         "or place this repo next to a sibling ../data/ directory."
     )
 
@@ -359,10 +359,10 @@ def _run_test(collector: ResultCollector, stage: str, test_id: str, name: str,
 # ---------------------------------------------------------------------------
 TEST_CATALOG: Dict[str, Dict[str, str]] = {
     # Stage 0: Bootstrap
-    "0.1": {"desc": "Verify autoflow package can be imported", "inputs": "Python module path", "outputs": "Module object"},
-    "0.2": {"desc": "Version string follows semver (major.minor[.patch])", "inputs": "autoflow.__version__", "outputs": "Validated version string"},
-    "0.3": {"desc": "All public API symbols exist in autoflow namespace", "inputs": "Expected symbol list (Flow, ApiFlow, Workflow, etc.)", "outputs": "All symbols found or list of missing",
-            "code": "from autoflow import Flow, ApiFlow, Workflow, NodeInfo, convert, map_strings"},
+    "0.1": {"desc": "Verify autograph package can be imported", "inputs": "Python module path", "outputs": "Module object"},
+    "0.2": {"desc": "Version string follows semver (major.minor[.patch])", "inputs": "autograph.__version__", "outputs": "Validated version string"},
+    "0.3": {"desc": "All public API symbols exist in autograph namespace", "inputs": "Expected symbol list (Flow, ApiFlow, Workflow, etc.)", "outputs": "All symbols found or list of missing",
+            "code": "from autograph import Flow, ApiFlow, Workflow, NodeInfo, convert, map_strings"},
     "0.4": {"desc": "Bundled workflow.json can be loaded as a Flow object", "inputs": "examples/workflows/workflow.json", "outputs": "Flow object with nodes"},
     "0.5": {"desc": "Built-in node_info dict contains the 6 standard ComfyUI node classes", "inputs": "BUILTIN_NODE_INFO dict (KSampler, CLIPTextEncode, etc.)", "outputs": "NodeInfo object"},
 
@@ -403,7 +403,7 @@ TEST_CATALOG: Dict[str, Dict[str, str]] = {
     "2.5": {"desc": "Convert workflow and serialize to JSON in one step", "inputs": "ApiFlow(path, node_info)", "outputs": "JSON string ready for ComfyUI /prompt API"},
     "2.6": {"desc": "Convert with error reporting — returns ok, data, errors, warnings", "inputs": "Flow + node_info", "outputs": "ConvertResult with .ok, .data, .errors",
             "code": "result = convert_with_errors(flow, node_info=ni)\nif result.ok: api = result.data"},
-    "2.7": {"desc": "Access _meta dict on API nodes (autoflow metadata)", "inputs": "api.KSampler._meta", "outputs": "Dict or None"},
+    "2.7": {"desc": "Access _meta dict on API nodes (autograph metadata)", "inputs": "api.KSampler._meta", "outputs": "Dict or None"},
     "2.9": {"desc": "Metadata written to _meta persists through to_json() serialization", "inputs": "node['_meta'] = {...}", "outputs": "_meta present in JSON output"},
     "2.14": {"desc": "Widget introspection: query available choices for combo widgets", "inputs": "api.KSampler.sampler_name.choices()", "outputs": "['euler', 'euler_ancestral', ...]",
              "code": "choices = api.KSampler.sampler_name.choices()"},
@@ -538,7 +538,7 @@ def generate_html_report(collector: ResultCollector, output_path: str,
                          fixtures: Optional[List[FixtureCase]] = None,
                          run_config: Optional[Dict[str, Any]] = None) -> str:
     """Generate an HTML investigation dashboard with test details, images, and progress."""
-    import autoflow
+    import autograph
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     stages = collector.by_stage()
     out_dir = Path(output_path).parent
@@ -721,7 +721,7 @@ def generate_html_report(collector: ResultCollector, output_path: str,
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>autoflow Test Dashboard</title>
+<title>autograph Test Dashboard</title>
 <style>
   * {{ box-sizing: border-box; }}
   body {{ font-family: 'Inter', system-ui, -apple-system, sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 2rem; line-height: 1.6; }}
@@ -836,10 +836,10 @@ def generate_html_report(collector: ResultCollector, output_path: str,
 </style>
 </head>
 <body>
-<h1>🧪 autoflow Test Dashboard</h1>
+<h1>🧪 autograph Test Dashboard</h1>
 <div class="overall">{'🎉 ALL TESTS PASSED' if collector.all_passed else '⚠️ SOME TESTS FAILED'}</div>
 {_build_run_config_html(run_config,
-    version=autoflow.__version__,
+    version=autograph.__version__,
     python_ver=sys.version.split()[0],
     platform=sys.platform,
     date_str=now,
@@ -909,7 +909,7 @@ document.querySelectorAll('.expandable').forEach(row => {{
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script>mermaid.initialize({{ startOnLoad: true, theme: 'dark' }});</script>
 
-<p style="color:#484f58;margin-top:2rem;font-size:0.85em;">Generated by autoflow test suite — click any test row for details</p>
+<p style="color:#484f58;margin-top:2rem;font-size:0.85em;">Generated by autograph test suite — click any test row for details</p>
 </body>
 </html>"""
 

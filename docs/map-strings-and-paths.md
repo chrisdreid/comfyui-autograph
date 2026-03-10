@@ -1,4 +1,4 @@
-# Declarative mapping (map_strings / map_paths)
+﻿# Declarative mapping (map_strings / map_paths)
 
 Use declarative mapping when you want a JSON-friendly spec to patch string/path inputs.
 
@@ -20,8 +20,8 @@ flowchart LR
 
 ```python
 # api
-from autoflow import ApiFlow
-from autoflow.map import map_strings
+from autograph import ApiFlow
+from autograph.map import map_strings
 
 api = ApiFlow("workflow.json")
 
@@ -46,9 +46,9 @@ api2 = map_strings(api, spec)
 
 ```python
 # api
-from autoflow.map import map_paths
+from autograph.map import map_paths
 
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json")
 spec = {

@@ -2,13 +2,13 @@
 """
 FastAPI Integration Example with Enhanced Error Handling
 
-This example demonstrates how to integrate the autoflow module with FastAPI
+This example demonstrates how to integrate the autograph module with FastAPI
 to provide structured error responses and proper HTTP status codes.
 
 Usage:
     pip install fastapi uvicorn
     python fastapi_example.py
-    # Then visit http://localhost:8000/docs (or whatever AUTOFLOW_PUBLIC_BASE_URL resolves to)
+    # Then visit http://localhost:8000/docs (or whatever AUTOGRAPH_PUBLIC_BASE_URL resolves to)
 """
 
 from fastapi import FastAPI, HTTPException, status
@@ -21,13 +21,13 @@ import argparse
 from pathlib import Path
 
 # Import the converter with error handling
-from autoflow import __version__ as autoflow_version
-from autoflow import Flow, ErrorCategory, ErrorSeverity
+from autograph import __version__ as AUTOGRAPH_version
+from autograph import Flow, ErrorCategory, ErrorSeverity
 
 app = FastAPI(
     title="ComfyUI Workflow to API Converter",
     description="Convert ComfyUI workflow JSON to API format with comprehensive error handling",
-    version=autoflow_version
+    version=AUTOGRAPH_version
 )
 
 class ConversionErrorResponse(BaseModel):
@@ -215,7 +215,7 @@ async def root():
     """Root endpoint with basic information."""
     return {
         "service": "ComfyUI Workflow to API Converter",
-        "version": autoflow_version,
+        "version": AUTOGRAPH_version,
         "endpoints": {
             "convert": "/convert-workflow",
             "convert_file": "/convert-workflow-file",
@@ -240,32 +240,32 @@ async def validation_exception_handler(request, exc):
 if __name__ == "__main__":
     import uvicorn
     
-    parser = argparse.ArgumentParser(description="FastAPI server example for autoflow")
+    parser = argparse.ArgumentParser(description="FastAPI server example for autograph")
     parser.add_argument(
         "--host",
         default=None,
-        help="Bind host. Resolution order: --host, then env AUTOFLOW_HOST, else default 0.0.0.0.",
+        help="Bind host. Resolution order: --host, then env AUTOGRAPH_HOST, else default 0.0.0.0.",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=None,
-        help="Bind port. Resolution order: --port, then env AUTOFLOW_PORT, else default 8000.",
+        help="Bind port. Resolution order: --port, then env AUTOGRAPH_PORT, else default 8000.",
     )
     parser.add_argument(
         "--public-base-url",
         default=None,
         help="Base URL used only for printing docs URLs. "
-             "Resolution order: --public-base-url, then env AUTOFLOW_PUBLIC_BASE_URL, "
+             "Resolution order: --public-base-url, then env AUTOGRAPH_PUBLIC_BASE_URL, "
              "else default http://localhost:8000.",
     )
     args = parser.parse_args()
 
-    host = args.host or os.environ.get("AUTOFLOW_HOST", "0.0.0.0")
+    host = args.host or os.environ.get("AUTOGRAPH_HOST", "0.0.0.0")
 
     port = args.port
     if port is None:
-        env_port = os.environ.get("AUTOFLOW_PORT")
+        env_port = os.environ.get("AUTOGRAPH_PORT")
         if env_port:
             try:
                 port = int(env_port)
@@ -276,7 +276,7 @@ if __name__ == "__main__":
 
     public_base_url = (
         args.public_base_url
-        or os.environ.get("AUTOFLOW_PUBLIC_BASE_URL")
+        or os.environ.get("AUTOGRAPH_PUBLIC_BASE_URL")
         or f"http://localhost:{port}"
     ).rstrip("/")
 

@@ -1,4 +1,4 @@
-"""autoflow.model_layer
+"""autograph.model_layer
 
 Model-layer selector.
 
@@ -7,7 +7,7 @@ drilling and polymorphic .load().  The ``models`` layer is the legacy dict-subcl
 implementation.
 
 Controlled by env var:
-  AUTOFLOW_MODEL_LAYER=models|flowtree  (default: flowtree)
+  AUTOGRAPH_MODEL_LAYER=models|flowtree  (default: flowtree)
 """
 
 from __future__ import annotations
@@ -17,14 +17,14 @@ from typing import Any, Tuple, Type
 
 
 def model_layer_name() -> str:
-    v = os.environ.get("AUTOFLOW_MODEL_LAYER", "flowtree")
+    v = os.environ.get("AUTOGRAPH_MODEL_LAYER", "flowtree")
     v = (v or "flowtree").strip().lower()
     if v in ("model", "models", "legacy"):
         return "models"
     if v in ("flowtree", "tree", "nav"):
         return "flowtree"
     # Fail fast so users don't think they're in a mode they aren't.
-    raise ValueError("AUTOFLOW_MODEL_LAYER must be 'models' or 'flowtree'")
+    raise ValueError("AUTOGRAPH_MODEL_LAYER must be 'models' or 'flowtree'")
 
 
 def get_models():

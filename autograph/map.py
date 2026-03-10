@@ -1,4 +1,4 @@
-"""autoflow.map
+"""autograph.map
 
 Stdlib-only helpers to post-process API-prompt workflows (dict of node_id -> node).
 
@@ -256,7 +256,7 @@ def force_recompute(
     flow: Any,
     *,
     node_types: Optional[List[str]] = None,
-    key: str = "_autoflow_force_recompute_",
+    key: str = "_AUTOGRAPH_force_recompute_",
     use_defaults: bool = False,
     in_place: bool = False,
 ) -> Dict[str, Any]:

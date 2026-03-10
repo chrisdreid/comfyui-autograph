@@ -1,9 +1,47 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.0.0] - 2026-03-06 — comfyui-autograph
+
+### 🚀 Package Renamed: `comfyui-autoflow` → `comfyui-autograph`
+
+This is the first release under the new name **comfyui-autograph** (v2.0.0).
+
+#### Breaking Changes
+- **Package name**: `comfyui-autoflow` → `comfyui-autograph`
+- **Imports**: `import autoflow` → `import autograph`
+- **CLI**: `autoflow` → `autograph` / `python -m autograph`
+- **Environment variables**: all `AUTOFLOW_*` → `AUTOGRAPH_*`
+  - `AUTOFLOW_COMFYUI_SERVER_URL` → `AUTOGRAPH_COMFYUI_SERVER_URL`
+  - `AUTOFLOW_MODEL_LAYER` → `AUTOGRAPH_MODEL_LAYER`
+  - `AUTOFLOW_NODEINFO_SOURCE` → `AUTOGRAPH_NODEINFO_SOURCE`
+  - (and all others)
+- **Internal attributes**: `_autoflow_origin` → `_autograph_origin`
+- **Workflow metadata namespace**: `extra.autoflow` → `extra.autograph`
+
+#### Migration
+```bash
+pip uninstall comfyui-autoflow
+pip install comfyui-autograph
+```
+Then update your imports and environment variables.
+
+---
+
+## [1.5.1] - 2026-03-06 — FINAL RELEASE of comfyui-autoflow
+
+### ⚠️ Deprecation Notice
+
+This was the **final release** of `comfyui-autoflow`. The project continues as `comfyui-autograph` (v2.0.0+).
+
+- `import autoflow` emits a `DeprecationWarning` directing users to `pip install comfyui-autograph`
+- No code changes from v1.5.0 except the deprecation warning
+
+---
 
 ## [1.5.0] - 2026-03-05
 
@@ -39,16 +77,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.1] - 2026-03-02
 
 ### Fixed
-- **`AUTOFLOW_COMFYUI_SERVER_URL` ignored by `NodeInfo('fetch')`** — `NodeInfo.__init__` hardcoded `allow_env=False` when an explicit input was provided, preventing the env var from being read. Changed to `allow_env=bool(allow_env)`.
+- **`AUTOGRAPH_COMFYUI_SERVER_URL` ignored by `NodeInfo('fetch')`** — `NodeInfo.__init__` hardcoded `allow_env=False` when an explicit input was provided, preventing the env var from being read. Changed to `allow_env=bool(allow_env)`.
 - **Graceful error messages** — replaced chained `ModuleNotFoundError` tracebacks (`from e`) with clean single-raise errors (`from None`) and actionable guidance listing all resolution options (env var, `server_url=`, file path, ComfyUI directory). Affected locations:
   - `node_info_from_comfyui_modules()` in `convert.py`
   - `get_widget_input_names()` in `convert.py`
   - Resolver `fetch→modules` fallback in `convert.py` — now catches the modules failure and raises a combined error explaining both server and modules failed
   - `NodeInfo.__init__` fallback error in `flowtree.py` — updated stale message to list all available options
-- **Test CLI reads `AUTOFLOW_COMFYUI_SERVER_URL`** — `detect_environment()` in `main.py` now falls back to the env var when `--server-url` is not provided
+- **Test CLI reads `AUTOGRAPH_COMFYUI_SERVER_URL`** — `detect_environment()` in `main.py` now falls back to the env var when `--server-url` is not provided
 
 ### Added
-- Test `t_2_28` in `phase_02_nodeinfo.py` — covers the exact failing scenario: `NodeInfo('fetch')` with `AUTOFLOW_COMFYUI_SERVER_URL` env var set and no explicit `server_url`
+- Test `t_2_28` in `phase_02_nodeinfo.py` — covers the exact failing scenario: `NodeInfo('fetch')` with `AUTOGRAPH_COMFYUI_SERVER_URL` env var set and no explicit `server_url`
 
 ### Removed
 - **Legacy `stage_*.py` test files** (27 files) — all test coverage is now in the 8 `phase_*.py` files
@@ -130,7 +168,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `WidgetValue` transparent wrapper — widget attributes now carry `.choices()`, `.tooltip()`, and `.spec()` methods while still comparing/hashing as raw values (`node.seed == 200` works)
-- `AUTOFLOW_COMFYUI_SERVER_URL` env var auto-fallback — `Flow` auto-fetches `node_info` from this URL when no explicit source is set
+- `AUTOGRAPH_COMFYUI_SERVER_URL` env var auto-fallback — `Flow` auto-fetches `node_info` from this URL when no explicit source is set
 - `UserWarning` emitted when `Flow` is created without `node_info`, guiding users to set the env var or pass it explicitly
 - `NodeRef.__repr__` shows clean path-keyed widget dict: `{'nodes.KSampler[0]': {'seed': 200, 'steps': 20}}`
 - `NodeRef.__dir__` filtered to show only widgets + useful methods (hides raw JSON noise)
@@ -140,7 +178,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Curated `__dir__` on `ApiFlow`, `NodeSet`, `FlowTreeNodesView`, and `WidgetValue` — tab completion shows only user-facing attributes (node types, widgets, methods)
 
 ### Changed
-- **Renamed `object_info` → `node_info` throughout** (breaking: class `ObjectInfo` → `NodeInfo`, env var `AUTOFLOW_OBJECT_INFO_SOURCE` → `AUTOFLOW_NODE_INFO_SOURCE`, CLI `--object-info-path` → `--node-info-path`, `--download-object-info-path` → `--download-node-info-path`, doc file `object-info-and-env.md` → `node-info-and-env.md`)
+- **Renamed `object_info` → `node_info` throughout** (breaking: class `ObjectInfo` → `NodeInfo`, env var `AUTOGRAPH_OBJECT_INFO_SOURCE` → `AUTOGRAPH_NODE_INFO_SOURCE`, CLI `--object-info-path` → `--node-info-path`, `--download-object-info-path` → `--download-node-info-path`, doc file `object-info-and-env.md` → `node-info-and-env.md`)
 - `FlowNodeProxy.__getattr__` wraps widget values in `WidgetValue` for schema introspection
 
 ---
@@ -150,13 +188,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `Workflow(...)` — unified entry point that loads workspace *or* API payload, auto-converts, and optionally submits
 - `NodeInfo.fetch(...)` / `NodeInfo.from_comfyui_modules()` — first-class node_info helpers with env-driven auto-resolution
-- `AUTOFLOW_NODE_INFO_SOURCE` env var (`fetch` / `modules` / `server` / `file`) for automatic node_info resolution
+- `AUTOGRAPH_NODE_INFO_SOURCE` env var (`fetch` / `modules` / `server` / `file`) for automatic node_info resolution
 - `.execute()` serverless rendering — run ComfyUI workflows in-process via `NODE_CLASS_MAPPINGS` (no HTTP server required)
 - `comfyui_available()` public helper for environment detection
 - `Dag` / `.dag()` graph helpers (stdlib-only toposort, `.to_mermaid()`, `.to_dot()`)
 - `ProgressTracker` enriching WebSocket events with `node_current`, `nodes_completed`, `nodes_progress`, timing metrics
 - `ProgressPrinter` improvements: `event_types=[...]` filtering, `raw=True` debug output, custom `format="..."` strings
-- WebSocket idle timeout (default 5 s, configurable via `AUTOFLOW_WS_IDLE_TIMEOUT_S`) with `/history` fallback
+- WebSocket idle timeout (default 5 s, configurable via `AUTOGRAPH_WS_IDLE_TIMEOUT_S`) with `/history` fallback
 - Cached-node fast path: skip WebSocket when all nodes are cached; DAG-based inference for missing events
 - Optional `/queue` polling (`poll_queue=True`) to report queue state while waiting
 - `SubmissionResult.save()` — one-call output saving (images + files)
@@ -231,7 +269,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `map_strings()` / `map_paths()` for workflow templating (literal + regex replacements)
 - `force_recompute()` for opt-in cache avoidance
 - Callback-first mapping with workflow-level `extra` passthrough and typed overwrites
-- CLI entrypoint (`python -m autoflow`)
+- CLI entrypoint (`python -m autograph`)
 - Comprehensive documentation: `README.md`, `docs/advanced.md`, `docs/load-vs-convert.md`, `docs/submit-and-images.md`, `docs/node-info-and-env.md`, and more
 - MIT License
 

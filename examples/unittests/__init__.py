@@ -1,3 +1,3 @@
-"""Unit tests for autoflow (kept under examples/ for convenience)."""
+"""Unit tests for autograph (kept under examples/ for convenience)."""
 
 

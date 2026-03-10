@@ -1,11 +1,11 @@
-# Research: Building Flows from Scratch in Python
+﻿# Research: Building Flows from Scratch in Python
 
 ## Goal
 
 Enable programmatic construction of complete ComfyUI workflow graphs:
 
 ```python
-from autoflow import Flow, NodeInfo
+from autograph import Flow, NodeInfo
 
 oi = NodeInfo.load("node_info.json")
 flow = Flow.create(node_info=oi)

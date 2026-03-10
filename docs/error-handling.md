@@ -1,4 +1,4 @@
-# Error Handling Guide
+﻿# Error Handling Guide
 
 ## Overview
 - Goal: service-friendly conversion that can return **partial results + structured errors**
@@ -63,7 +63,7 @@ Each error has a severity level:
 ### HTTP Status Code Mapping
 
 ```python
-from autoflow import ErrorCategory, ErrorSeverity
+from autograph import ErrorCategory, ErrorSeverity
 
 def determine_http_status(result: ConversionResult) -> int:
     if not result.success:
@@ -137,13 +137,13 @@ def handle_api_response(response_data: dict) -> None:
 1. **Use structured conversion**:
    ```python
    # ✓ Good
-   from autoflow import Flow
+   from autograph import Flow
    workflow_data = "workflow.json"  # workspace workflow.json path
    result = Flow.load(workflow_data).convert_with_errors(node_info="node_info.json")
    
    # ✗ Avoid (for API endpoints)
    try:
-       from autoflow import ApiFlow
+       from autograph import ApiFlow
        data = ApiFlow(workflow_data, node_info="node_info.json")
    except Exception as e:
        # Exception handling
@@ -309,7 +309,7 @@ async def convert(request: WorkflowRequest):
 ```python
 @app.post("/convert")
 async def convert(request: WorkflowRequest):
-    from autoflow import Flow
+    from autograph import Flow
     result = Flow.load(request.workflow_data).convert_with_errors(node_info="node_info.json")
     
     # Map to appropriate HTTP status

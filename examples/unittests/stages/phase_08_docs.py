@@ -154,7 +154,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
         if ni_default.is_file():
             node_info_path = ni_default
 
-    out_dir = Path(kwargs.get("output_dir", _REPO_ROOT / "autoflow-test-suite" / "outputs")) / "_docs_sandbox"
+    out_dir = Path(kwargs.get("output_dir", _REPO_ROOT / "autograph-test-suite" / "outputs")) / "_docs_sandbox"
 
     def t_8_0():
         return {

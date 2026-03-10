@@ -1,4 +1,4 @@
-"""autoflow.convert
+"""autograph.convert
 
 Conversion core: ComfyUI workspace workflow.json -> API payload (ApiFlow format).
 
@@ -592,12 +592,12 @@ def normalize_server_url(
     if server_url:
         return server_url
     if allow_env:
-        env = os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+        env = os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
         if isinstance(env, str) and env.strip():
             return env.strip()
     if allow_none:
         return None
-    raise ValueError("Missing server_url. Pass server_url= or set AUTOFLOW_COMFYUI_SERVER_URL.")
+    raise ValueError("Missing server_url. Pass server_url= or set AUTOGRAPH_COMFYUI_SERVER_URL.")
 
 
 def normalize_workflow_input(workflow_data: Union[Dict[str, Any], str, Path, Mapping]) -> Dict[str, Any]:
@@ -750,7 +750,7 @@ def _ensure_extra_nodes_loaded() -> None:
 
     ComfyUI's server calls ``init_extra_nodes()`` at startup which populates
     ``NODE_CLASS_MAPPINGS`` with nodes from ``comfy_extras/``,
-    ``comfy_api_nodes/``, and ``custom_nodes/``.  When autoflow runs outside
+    ``comfy_api_nodes/``, and ``custom_nodes/``.  When autograph runs outside
     the server (standalone script / library usage), only the ~64 core nodes
     are present.  This helper detects that situation and performs the init.
     """
@@ -784,7 +784,7 @@ def _ensure_extra_nodes_loaded() -> None:
         # We're inside an active event loop (e.g. Jupyter, server context).
         # Cannot use asyncio.run(); warn and skip.
         logging.warning(
-            "autoflow: cannot load ComfyUI extra nodes from within a running "
+            "autograph: cannot load ComfyUI extra nodes from within a running "
             "event loop. NODE_CLASS_MAPPINGS may be incomplete (%d entries). "
             "Consider calling init_extra_nodes() before using NodeInfo('modules').",
             len(NODE_CLASS_MAPPINGS),
@@ -793,7 +793,7 @@ def _ensure_extra_nodes_loaded() -> None:
         return
 
     logging.info(
-        "autoflow: NODE_CLASS_MAPPINGS has only %d entries; "
+        "autograph: NODE_CLASS_MAPPINGS has only %d entries; "
         "loading extra/custom nodes via init_extra_nodes()...",
         len(NODE_CLASS_MAPPINGS),
     )
@@ -807,7 +807,7 @@ def _ensure_extra_nodes_loaded() -> None:
 
         def _suppressed_start(self_thread: threading.Thread) -> None:  # type: ignore
             logging.debug(
-                "autoflow: suppressed background thread %r during init_extra_nodes()",
+                "autograph: suppressed background thread %r during init_extra_nodes()",
                 self_thread.name,
             )
 
@@ -817,7 +817,7 @@ def _ensure_extra_nodes_loaded() -> None:
         finally:
             threading.Thread.start = _real_thread_start  # type: ignore
     except Exception as exc:
-        logging.warning("autoflow: init_extra_nodes() failed: %s", exc)
+        logging.warning("autograph: init_extra_nodes() failed: %s", exc)
     finally:
         _EXTRA_NODES_INIT_DONE = True
 
@@ -830,7 +830,7 @@ def node_info_from_comfyui_modules() -> Dict[str, Any]:
     except ImportError:
         raise NodeInfoError(
             "ComfyUI modules not available (could not import 'comfy'). To get node_info:\n"
-            "  • Set AUTOFLOW_COMFYUI_SERVER_URL and use NodeInfo('fetch')\n"
+            "  • Set AUTOGRAPH_COMFYUI_SERVER_URL and use NodeInfo('fetch')\n"
             "  • Pass server_url=  e.g. NodeInfo('fetch', server_url='http://localhost:8188')\n"
             "  • Pass a file path  e.g. NodeInfo('path/to/node_info.json')\n"
             "  • Run from inside the ComfyUI directory (for direct module import)"
@@ -927,7 +927,7 @@ def resolve_node_info_with_origin(
     if node_info is not None:
         if isinstance(node_info, Mapping):
             # Preserve origin if caller provided a richer node_info object.
-            origin = getattr(node_info, "origin", None) or getattr(node_info, "_autoflow_origin", None)
+            origin = getattr(node_info, "origin", None) or getattr(node_info, "_AUTOGRAPH_origin", None)
             if isinstance(origin, NodeInfoOrigin):
                 # Preserve dict subclasses (e.g. models.NodeInfo) so callers can keep metadata.
                 if isinstance(node_info, dict):
@@ -958,14 +958,14 @@ def resolve_node_info_with_origin(
 
                 effective = server_url
                 if not effective and allow_env:
-                    env = os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+                    env = os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
                     if isinstance(env, str) and env.strip():
                         effective = env.strip()
 
                 if obj_str == "server":
                     if not effective:
                         raise WorkflowConverterError(
-                            "node_info='server' requires server_url or AUTOFLOW_COMFYUI_SERVER_URL."
+                            "node_info='server' requires server_url or AUTOGRAPH_COMFYUI_SERVER_URL."
                         )
                     return (
                         fetch_node_info(effective, timeout),
@@ -991,7 +991,7 @@ def resolve_node_info_with_origin(
                     raise NodeInfoError(
                         "node_info='fetch' could not find a server URL and ComfyUI modules "
                         "are not available.\n"
-                        "  • Set AUTOFLOW_COMFYUI_SERVER_URL environment variable, or\n"
+                        "  • Set AUTOGRAPH_COMFYUI_SERVER_URL environment variable, or\n"
                         "  • Pass server_url='http://localhost:8188'"
                     ) from None
                 return (
@@ -1016,7 +1016,7 @@ def resolve_node_info_with_origin(
         if src:
             src_l = src.lower()
             if src_l == "fetch":
-                effective = server_url or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+                effective = server_url or os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
                 if effective:
                     oi = fetch_node_info(effective, timeout)
                     _NODE_INFO_SOURCE_CACHE["fetch"] = oi
@@ -1043,10 +1043,10 @@ def resolve_node_info_with_origin(
                     requested=src, resolved="modules", via_env=True, modules_root=str(root) if root else None, note="env:modules"
                 )
             if src_l == "server":
-                effective = server_url or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+                effective = server_url or os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
                 if not effective:
                     raise WorkflowConverterError(
-                        "AUTOFLOW_NODE_INFO_SOURCE=server requires server_url or AUTOFLOW_COMFYUI_SERVER_URL."
+                        "AUTOGRAPH_NODE_INFO_SOURCE=server requires server_url or AUTOGRAPH_COMFYUI_SERVER_URL."
                     )
                 oi = fetch_node_info(effective, timeout)
                 _NODE_INFO_SOURCE_CACHE["server"] = oi
@@ -1062,23 +1062,23 @@ def resolve_node_info_with_origin(
             requested="server_url", resolved="server", effective_server_url=server_url, note="server_url fallback"
         )
 
-    # Final fallback: check AUTOFLOW_COMFYUI_SERVER_URL even without explicit source
+    # Final fallback: check AUTOGRAPH_COMFYUI_SERVER_URL even without explicit source
     if allow_env:
-        env_server = os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL", "").strip()
+        env_server = os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL", "").strip()
         if env_server:
             try:
                 oi = fetch_node_info(env_server, timeout)
                 _NODE_INFO_SOURCE_CACHE["server"] = oi
                 return oi, True, NodeInfoOrigin(
                     requested="auto", resolved="server", via_env=True,
-                    effective_server_url=env_server, note="auto:AUTOFLOW_COMFYUI_SERVER_URL fallback"
+                    effective_server_url=env_server, note="auto:AUTOGRAPH_COMFYUI_SERVER_URL fallback"
                 )
             except Exception:
                 pass  # server unreachable, fall through
 
     if require_source:
         raise WorkflowConverterError(
-            "Missing node_info source. Set AUTOFLOW_NODE_INFO_SOURCE or pass node_info explicitly."
+            "Missing node_info source. Set AUTOGRAPH_NODE_INFO_SOURCE or pass node_info explicitly."
         )
 
     return None, False, NodeInfoOrigin(note="empty")
@@ -1096,7 +1096,7 @@ def normalize_node_info(
         if not allow_env and server_url is None:
             if require_source:
                 raise WorkflowConverterError(
-                    "Missing node_info source. Set AUTOFLOW_NODE_INFO_SOURCE or pass node_info explicitly."
+                    "Missing node_info source. Set AUTOGRAPH_NODE_INFO_SOURCE or pass node_info explicitly."
                 )
             return None
         oi, _use_api = resolve_node_info(
@@ -1170,7 +1170,7 @@ def get_widget_input_names(class_type: str, node_info: Optional[Dict[str, Any]] 
     except ImportError:
         raise NodeInfoError(
             "ComfyUI modules not available (could not import 'comfy'). To get node_info:\n"
-            "  • Set AUTOFLOW_COMFYUI_SERVER_URL and use NodeInfo('fetch')\n"
+            "  • Set AUTOGRAPH_COMFYUI_SERVER_URL and use NodeInfo('fetch')\n"
             "  • Pass server_url=  e.g. NodeInfo('fetch', server_url='http://localhost:8188')\n"
             "  • Pass a file path  e.g. NodeInfo('path/to/node_info.json')\n"
             "  • Run from inside the ComfyUI directory (for direct module import)"
@@ -1627,14 +1627,14 @@ def _deep_merge(dst: Any, src: Any, *, mode: str) -> Any:
     return dst
 
 
-def _autoflow_nodes_patch_spec(workflow_extra: Optional[Dict[str, Any]]) -> Dict[str, List[Any]]:
+def _AUTOGRAPH_nodes_patch_spec(workflow_extra: Optional[Dict[str, Any]]) -> Dict[str, List[Any]]:
     """
     Return a dict of node_id -> [directive, ...] (best-effort), in application order.
 
     Primary:
-      extra.autoflow.meta.nodes
+      extra.autograph.meta.nodes
     Legacy alias (optional):
-      extra.autoflow.nodes
+      extra.autograph.nodes
     """
     if not isinstance(workflow_extra, dict):
         return {}
@@ -1654,8 +1654,8 @@ def _autoflow_nodes_patch_spec(workflow_extra: Optional[Dict[str, Any]]) -> Dict
         nodes0 = meta0.get("nodes")
         _add_nodes(nodes0)
 
-    # 2) autoflow namespace (wins over generic extra.meta.nodes)
-    f2a = workflow_extra.get("autoflow")
+    # 2) autograph namespace (wins over generic extra.meta.nodes)
+    f2a = workflow_extra.get("autograph")
     if not isinstance(f2a, dict):
         return out
 
@@ -1733,7 +1733,7 @@ def _apply_patch_ops(dst: Dict[str, Any], patch: Dict[str, Any], *, default_mode
             dst[k] = v
 
 
-def _apply_autoflow_node_patches(
+def _apply_AUTOGRAPH_node_patches(
     api_data: Dict[str, Any],
     workflow_extra: Optional[Dict[str, Any]],
     *,
@@ -1751,7 +1751,7 @@ def _apply_autoflow_node_patches(
       - add:             deep-merge add-only (no overwrite)
       - replace:         replace entire node dict with `data`
     """
-    spec = _autoflow_nodes_patch_spec(workflow_extra)
+    spec = _AUTOGRAPH_nodes_patch_spec(workflow_extra)
     if not spec:
         return
 
@@ -1769,7 +1769,7 @@ def _apply_autoflow_node_patches(
         if nid not in api_data or not isinstance(api_data.get(nid), dict):
             if warn is not None:
                 warn(
-                    f"autoflow meta patch references node_id not in ApiFlow: {nid}",
+                    f"autograph meta patch references node_id not in ApiFlow: {nid}",
                     {"node_id": nid},
                 )
             continue
@@ -1789,7 +1789,7 @@ def _apply_autoflow_node_patches(
                 else:
                     if warn is not None:
                         warn(
-                            f"autoflow meta patch for node {nid} ignored (replace mode requires dict data)",
+                            f"autograph meta patch for node {nid} ignored (replace mode requires dict data)",
                             {"node_id": nid, "mode": mode},
                         )
                 continue
@@ -1797,7 +1797,7 @@ def _apply_autoflow_node_patches(
             if not isinstance(data, dict):
                 if warn is not None:
                     warn(
-                        f"autoflow meta patch for node {nid} ignored (data must be a dict)",
+                        f"autograph meta patch for node {nid} ignored (data must be a dict)",
                         {"node_id": nid, "mode": mode},
                     )
                 continue
@@ -1823,8 +1823,8 @@ def convert_workflow_with_errors(
     include_meta: bool = DEFAULT_INCLUDE_META,
     output_file: Optional[Union[str, Path]] = None,
     convert_callbacks: Optional[Union[Callable[[Dict[str, Any]], Any], Iterable[Callable[[Dict[str, Any]], Any]]]] = None,
-    disable_autoflow_meta: bool = False,
-    apply_autoflow_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
+    disable_AUTOGRAPH_meta: bool = False,
+    apply_AUTOGRAPH_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
 ) -> ConversionResult:
     try:
         workflow_dict = normalize_workflow_input(workflow_data)
@@ -1844,8 +1844,8 @@ def convert_workflow_with_errors(
         )
         api_data = workflow_to_api_format_with_errors(workflow_dict, node_info_dict, use_api, include_meta)
 
-        enable_meta = True if apply_autoflow_meta is None else bool(apply_autoflow_meta)
-        if disable_autoflow_meta:
+        enable_meta = True if apply_AUTOGRAPH_meta is None else bool(apply_AUTOGRAPH_meta)
+        if disable_AUTOGRAPH_meta:
             enable_meta = False
 
         if enable_meta and isinstance(api_data.data, dict):
@@ -1862,7 +1862,7 @@ def convert_workflow_with_errors(
                     )
                 )
 
-            _apply_autoflow_node_patches(api_data.data, _extract_workflow_extra(workflow_dict), warn=_warn)
+            _apply_AUTOGRAPH_node_patches(api_data.data, _extract_workflow_extra(workflow_dict), warn=_warn)
             api_data = ConversionResult(
                 success=api_data.success,
                 data=api_data.data,
@@ -1928,8 +1928,8 @@ def convert_workflow(
     include_meta: bool = DEFAULT_INCLUDE_META,
     output_file: Optional[Union[str, Path]] = None,
     convert_callbacks: Optional[Union[Callable[[Dict[str, Any]], Any], Iterable[Callable[[Dict[str, Any]], Any]]]] = None,
-    disable_autoflow_meta: bool = False,
-    apply_autoflow_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
+    disable_AUTOGRAPH_meta: bool = False,
+    apply_AUTOGRAPH_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
 ):
     workflow_dict = normalize_workflow_input(workflow_data)
 
@@ -1949,12 +1949,12 @@ def convert_workflow(
     api_data = workflow_to_api_format(workflow_dict, node_info_dict, use_api, include_meta)
     workflow_meta = _apply_convert_mapping(workflow_dict, api_data)
 
-    enable_meta = True if apply_autoflow_meta is None else bool(apply_autoflow_meta)
-    if disable_autoflow_meta:
+    enable_meta = True if apply_AUTOGRAPH_meta is None else bool(apply_AUTOGRAPH_meta)
+    if disable_AUTOGRAPH_meta:
         enable_meta = False
 
     if enable_meta:
-        _apply_autoflow_node_patches(api_data, workflow_meta, warn=None)
+        _apply_AUTOGRAPH_node_patches(api_data, workflow_meta, warn=None)
 
     if output_file is not None:
         save_workflow_to_file(api_data, output_file)
@@ -1982,8 +1982,8 @@ def convert(
     include_meta: bool = DEFAULT_INCLUDE_META,
     output_path: Optional[Union[str, Path]] = None,
     convert_callbacks: Optional[Union[Callable[[Dict[str, Any]], Any], Iterable[Callable[[Dict[str, Any]], Any]]]] = None,
-    disable_autoflow_meta: bool = False,
-    apply_autoflow_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
+    disable_AUTOGRAPH_meta: bool = False,
+    apply_AUTOGRAPH_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
 ):
     wf = convert_workflow(
         workflow_data=workflow_data,
@@ -1993,8 +1993,8 @@ def convert(
         include_meta=include_meta,
         output_file=None,
         convert_callbacks=convert_callbacks,
-        disable_autoflow_meta=disable_autoflow_meta,
-        apply_autoflow_meta=apply_autoflow_meta,
+        disable_AUTOGRAPH_meta=disable_AUTOGRAPH_meta,
+        apply_AUTOGRAPH_meta=apply_AUTOGRAPH_meta,
     )
     if output_path is not None:
         wf.save(output_path)
@@ -2009,8 +2009,8 @@ def convert_with_errors(
     include_meta: bool = DEFAULT_INCLUDE_META,
     output_path: Optional[Union[str, Path]] = None,
     convert_callbacks: Optional[Union[Callable[[Dict[str, Any]], Any], Iterable[Callable[[Dict[str, Any]], Any]]]] = None,
-    disable_autoflow_meta: bool = False,
-    apply_autoflow_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
+    disable_AUTOGRAPH_meta: bool = False,
+    apply_AUTOGRAPH_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
 )-> ConvertResult:
     r = convert_workflow_with_errors(
         workflow_data=workflow_data,
@@ -2020,8 +2020,8 @@ def convert_with_errors(
         include_meta=include_meta,
         output_file=None,
         convert_callbacks=convert_callbacks,
-        disable_autoflow_meta=disable_autoflow_meta,
-        apply_autoflow_meta=apply_autoflow_meta,
+        disable_AUTOGRAPH_meta=disable_AUTOGRAPH_meta,
+        apply_AUTOGRAPH_meta=apply_AUTOGRAPH_meta,
     )
     data = None
     if isinstance(r.data, dict):

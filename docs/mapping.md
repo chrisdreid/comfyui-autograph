@@ -1,4 +1,4 @@
-# Mapping (convert callbacks + api_mapping)
+﻿# Mapping (convert callbacks + api_mapping)
 
 Mapping is how you patch/override values in an `ApiFlow` for pipelines (seeds, paths, prompts, etc).
 
@@ -25,7 +25,7 @@ flowchart LR
 ```python
 # api
 import random
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 rng = random.SystemRandom()
 
@@ -72,7 +72,7 @@ flowchart LR
 ```python
 # api
 import random
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 rng = random.SystemRandom()
 
@@ -87,29 +87,29 @@ def seed_from_meta(ctx):
 api = ApiFlow("workflow.json", convert_callbacks=seed_from_meta)
 ```
 
-## Per-node patch injection (extra.autoflow.meta.nodes + extra.meta.nodes)
+## Per-node patch injection (extra.autograph.meta.nodes + extra.meta.nodes)
 
 Sometimes you want to **carry metadata or patch directives inside the workflow file** itself, and have those directives applied to the converted `ApiFlow` nodes.
 
-autoflow supports this as an **opt-in** convert feature:
+autograph supports this as an **opt-in** convert feature:
 
 - Put node directives under either:
-  - `workflow["extra"]["autoflow"]["meta"]["nodes"][node_id]` (preferred, explicit)
+  - `workflow["extra"]["autograph"]["meta"]["nodes"][node_id]` (preferred, explicit)
   - `workflow["extra"]["meta"]["nodes"][node_id]` (generic metadata path)
-- By default, patches are applied automatically during conversion.\n+- To opt out (disable), pass `disable_autoflow_meta=True`
+- By default, patches are applied automatically during conversion.\n+- To opt out (disable), pass `disable_AUTOGRAPH_meta=True`
 
 If both are present for the same node id, they are applied in this order:
 
 1. `extra.meta.nodes`
-2. `extra.autoflow.meta.nodes`
-3. `extra.autoflow.nodes` (legacy alias)
+2. `extra.autograph.meta.nodes`
+3. `extra.autograph.nodes` (legacy alias)
 
 ### Example (merge mode default)
 
 ```json
 {
   "extra": {
-    "autoflow": {
+    "autograph": {
       "meta": {
         "nodes": {
           "8": {
@@ -124,10 +124,10 @@ If both are present for the same node id, they are applied in this order:
 ```
 
 ```python
-from autoflow import Flow
+from autograph import Flow
 
 api = Flow.load("workflow.json").convert(
-    # disable_autoflow_meta=True,
+    # disable_AUTOGRAPH_meta=True,
 )
 print(api["8"]["meta"]["note"])  # "hello"
 ```
@@ -164,7 +164,7 @@ flowchart LR
 
 ```python
 # api
-from autoflow import ApiFlow, api_mapping
+from autograph import ApiFlow, api_mapping
 
 def win_to_linux(ctx):
     v = ctx["value"]

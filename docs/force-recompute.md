@@ -1,4 +1,4 @@
-# Force recompute (force_recompute)
+﻿# Force recompute (force_recompute)
 
 Use this when you want repeated runs to avoid reusing cached results.
 
@@ -16,8 +16,8 @@ flowchart LR
 
 ```python
 # api
-from autoflow import ApiFlow
-from autoflow.map import force_recompute
+from autograph import ApiFlow
+from autograph.map import force_recompute
 
 api = ApiFlow("workflow.json")
 api2 = force_recompute(api, use_defaults=True)

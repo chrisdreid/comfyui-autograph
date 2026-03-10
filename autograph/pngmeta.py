@@ -1,4 +1,4 @@
-"""autoflow.pngmeta
+"""autograph.pngmeta
 
 Stdlib-only PNG metadata helpers for ComfyUI.
 

@@ -1,4 +1,4 @@
-"""autoflow.ws
+"""autograph.ws
 
 Stdlib-only websocket client utilities for ComfyUI progress events.
 
@@ -692,7 +692,7 @@ def stream_comfy_events(
         wait_timeout: Maximum time to wait for completion
         idle_timeout: Max seconds to wait without receiving any websocket messages before
                       raising (so callers can fall back to /history polling). If None,
-                      uses env AUTOFLOW_WS_IDLE_TIMEOUT_S else defaults to 5.0.
+                      uses env AUTOGRAPH_WS_IDLE_TIMEOUT_S else defaults to 5.0.
         transport: Optional custom transport
         prompt: Optional prompt dict (API payload) to extract nodes_total from
         cached_nodes: Optional list of cached node IDs that won't execute
@@ -744,7 +744,7 @@ def stream_comfy_events(
         eff_idle = idle_timeout
         if eff_idle is None:
             try:
-                eff_idle = float(os.environ.get("AUTOFLOW_WS_IDLE_TIMEOUT_S", "5.0"))
+                eff_idle = float(os.environ.get("AUTOGRAPH_WS_IDLE_TIMEOUT_S", "5.0"))
             except Exception:
                 eff_idle = 5.0
         eff_idle = max(0.5, float(eff_idle))

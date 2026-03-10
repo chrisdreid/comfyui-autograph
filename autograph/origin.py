@@ -1,4 +1,4 @@
-"""autoflow.origin
+"""autograph.origin
 
 Small metadata objects for tracking where inputs were resolved from.
 """
@@ -16,7 +16,7 @@ class NodeInfoOrigin:
 
     - requested: what the caller/environment requested (token, URL, path, etc.)
     - resolved: what we actually loaded from ("dict", "file", "url", "modules", "server", or None)
-    - via_env: whether AUTOFLOW_NODE_INFO_SOURCE was used
+    - via_env: whether AUTOGRAPH_NODE_INFO_SOURCE was used
     - effective_server_url: when resolved from a server, the effective base URL used
     - note: extra context (e.g. fallback details)
     """

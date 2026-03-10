@@ -2,22 +2,22 @@
 """
 Diagnostic: compare NodeInfo from modules vs from server fetch.
 
-Usage (from ComfyUI root, with autoflow on PYTHONPATH):
-    PYTHONPATH=. python <autoflow>/examples/code/diag_nodeinfo.py [--server-url http://localhost:8188]
+Usage (from ComfyUI root, with autograph on PYTHONPATH):
+    PYTHONPATH=. python <autograph>/examples/code/diag_nodeinfo.py [--server-url http://localhost:8188]
 
-Also accepts AUTOFLOW_COMFYUI_SERVER_URL env var.
+Also accepts AUTOGRAPH_COMFYUI_SERVER_URL env var.
 """
 import json
 import os
 import sys
 from pathlib import Path
 
-# Make sure autoflow is importable
+# Make sure autograph is importable
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from autoflow.convert import node_info_from_comfyui_modules, fetch_node_info
+from autograph.convert import node_info_from_comfyui_modules, fetch_node_info
 
 
 def _deep_type_summary(v, depth=0, max_depth=3):
@@ -127,7 +127,7 @@ def compare_node_infos(modules_ni, fetch_ni):
         REPO / "examples" / "fixtures" / "workflow.json",
     ]
     # Also check parent test suite
-    parent_suite = REPO.parent / "comfyui-autoflow-test-suite" / "fixtures" / "logo-basic" / "workflow.json"
+    parent_suite = REPO.parent / "comfyui-autograph-test-suite" / "fixtures" / "logo-basic" / "workflow.json"
     wf_candidates.append(parent_suite)
 
     wf_path = None
@@ -142,7 +142,7 @@ def compare_node_infos(modules_ni, fetch_ni):
 
     print(f"  Using workflow: {wf_path}")
 
-    from autoflow.convert import workflow_to_api_format
+    from autograph.convert import workflow_to_api_format
 
     for label, ni in [("MODULES", modules_ni), ("FETCH", fetch_ni)]:
         wf_data = json.loads(wf_path.read_text())
@@ -180,12 +180,12 @@ def compare_node_infos(modules_ni, fetch_ni):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Compare NodeInfo from modules vs fetch")
-    parser.add_argument("--server-url", default=None, help="ComfyUI server URL (default: AUTOFLOW_COMFYUI_SERVER_URL)")
+    parser.add_argument("--server-url", default=None, help="ComfyUI server URL (default: AUTOGRAPH_COMFYUI_SERVER_URL)")
     args = parser.parse_args()
 
-    server_url = args.server_url or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+    server_url = args.server_url or os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
     if not server_url:
-        print("ERROR: Need --server-url or AUTOFLOW_COMFYUI_SERVER_URL to fetch node_info from server")
+        print("ERROR: Need --server-url or AUTOGRAPH_COMFYUI_SERVER_URL to fetch node_info from server")
         sys.exit(1)
 
     print(f"Fetching node_info from server: {server_url}")

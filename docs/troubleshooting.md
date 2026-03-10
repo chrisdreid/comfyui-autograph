@@ -1,4 +1,4 @@
-# Troubleshooting
+﻿# Troubleshooting
 
 ```mermaid
 flowchart TD
@@ -29,7 +29,7 @@ flowchart TD
 ## "Missing server URL"
 - submission requires:
   - `server_url=...` (Python), or
-  - `AUTOFLOW_COMFYUI_SERVER_URL` (env var)
+  - `AUTOGRAPH_COMFYUI_SERVER_URL` (env var)
 
 ## Conversion succeeds but some nodes are skipped
 
@@ -39,7 +39,7 @@ flowchart TD
   - The node belongs to a custom node pack not present in the node_info
 
 ```python
-result = autoflow.convert_workflow_with_errors(workflow)
+result = autograph.convert_workflow_with_errors(workflow)
 print(result)  # e.g. ConvertResult(ok=True, errors=0, warnings=2, nodes=12/14)
 for w in result.warnings:
     print(w)
@@ -50,14 +50,14 @@ for w in result.warnings:
 - Verify ComfyUI is reachable: `curl http://127.0.0.1:8188/system_stats`
 - Check that `server_url` includes the port (default: `8188`)
 - If behind a reverse proxy, ensure WebSocket upgrade is allowed
-  (autoflow uses WebSocket for real-time progress events)
+  (autograph uses WebSocket for real-time progress events)
 - Pass `wait=False` to `submit()` to fire-and-forget without blocking
 
 ## Connection refused / network errors
 
 - ComfyUI may not be running or is on a different host/port
-- `autoflow.comfyui_available()` can probe the server before submitting:
+- `autograph.comfyui_available()` can probe the server before submitting:
   ```python
-  if autoflow.comfyui_available(server_url="http://localhost:8188"):
+  if autograph.comfyui_available(server_url="http://localhost:8188"):
       result = api_flow.submit(server_url="http://localhost:8188")
   ```

@@ -31,8 +31,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import ApiFlow, NodeInfo
-    from autoflow import map_strings, map_paths, force_recompute, api_mapping
+    from autograph import ApiFlow, NodeInfo
+    from autograph import map_strings, map_paths, force_recompute, api_mapping
 
     wf_path = str(_BUNDLED_WORKFLOW)
     api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)

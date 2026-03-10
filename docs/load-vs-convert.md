@@ -1,4 +1,4 @@
-# Load vs convert (Flow / ApiFlow)
+﻿# Load vs convert (Flow / ApiFlow)
 
 Use the right entry point based on what you have.
 
@@ -47,7 +47,7 @@ All `.load()` methods accept multiple input types:
 
 ```python
 # api
-from autoflow import Flow
+from autograph import Flow
 
 flow = Flow.load("workflow.json")
 api = flow.convert(node_info="node_info.json")
@@ -60,7 +60,7 @@ api.save("workflow-api.json")
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow.load("workflow-api.json")
 ```
@@ -71,7 +71,7 @@ api = ApiFlow.load("workflow-api.json")
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 # Workspace file → auto-converts to API payload
 api = ApiFlow("workflow.json", node_info="node_info.json")
@@ -89,7 +89,7 @@ ComfyUI embeds workflow metadata in PNG outputs. Extract directly:
 
 ```python
 # api
-from autoflow import Flow, ApiFlow
+from autograph import Flow, ApiFlow
 
 # From PNG file
 api_flow = ApiFlow.load("ComfyUI_00001_.png")  # extracts 'prompt' (API payload)
@@ -107,7 +107,7 @@ Access and modify nodes using clean attribute and path syntax:
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow.load("workflow-api.json")
 
@@ -143,7 +143,7 @@ For `Flow` (workspace format), access nodes via `.nodes` to avoid conflicts with
 
 ```python
 # api
-from autoflow import Flow
+from autograph import Flow
 flow = Flow.load("workflow.json")
 
 # Access nodes via .nodes
@@ -163,7 +163,7 @@ For `NodeInfo`, path access navigates the schema:
 
 ```python
 # api
-from autoflow import NodeInfo
+from autograph import NodeInfo
 obj = NodeInfo.load("node_info.json")
 obj["KSampler/input/required/seed"]  # get seed input spec
 ```
@@ -171,7 +171,7 @@ obj["KSampler/input/required/seed"]  # get seed input spec
 All proxy objects support conversion back to plain dicts/lists:
 
 ```python
-from autoflow import Flow, ApiFlow
+from autograph import Flow, ApiFlow
 
 api = ApiFlow.load("workflow-api.json")
 flow = Flow.load("workflow.json")
@@ -193,5 +193,5 @@ flow.nodes.to_list()               # [node, ...]
 
 ```bash
 # cli
-python -m autoflow --input-path workflow.json --output-path workflow-api.json --node-info-path node_info.json
+python -m autograph --input-path workflow.json --output-path workflow-api.json --node-info-path node_info.json
 ```

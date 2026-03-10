@@ -8,8 +8,8 @@
       "id": 8,
       "type": "VAEDecode",
       "pos": [
-        1512.6519708504616,
-        302.55543642810153
+        1512.6519708504618,
+        302.5555054438963
       ],
       "size": [
         252,
@@ -56,12 +56,12 @@
       "id": 9,
       "type": "SaveImage",
       "pos": [
-        1823.415738889565,
-        294.0760868811866
+        1823.4157388895653,
+        294.0760868811867
       ],
       "size": [
         564,
-        666
+        636
       ],
       "flags": {},
       "order": 10,
@@ -77,6 +77,7 @@
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.3.65",
+        "Node name for S&R": "SaveImage",
         "ue_properties": {
           "widget_ue_connectable": {},
           "version": "7.5.2",
@@ -84,19 +85,19 @@
         }
       },
       "widgets_values": [
-        "Default"
+        "Autograph/logo"
       ]
     },
     {
       "id": 15,
       "type": "MarkdownNote",
       "pos": [
-        1045.402618203709,
-        -148.41495368636294
+        1045.4023421405302,
+        -148.41491917846554
       ],
       "size": [
         528,
-        357.078125
+        357.171875
       ],
       "flags": {},
       "order": 0,
@@ -121,8 +122,8 @@
       "id": 14,
       "type": "MarkdownNote",
       "pos": [
-        1113.2042869975949,
-        809.0937555761851
+        1113.204286997595,
+        809.0937555761853
       ],
       "size": [
         564,
@@ -151,12 +152,12 @@
       "id": 13,
       "type": "MarkdownNote",
       "pos": [
-        613.9999312683578,
+        613.9997932367687,
         1033.9999426241725
       ],
       "size": [
         396,
-        139.953125
+        139.984375
       ],
       "flags": {},
       "order": 2,
@@ -181,12 +182,12 @@
       "id": 11,
       "type": "MarkdownNote",
       "pos": [
-        -441.99994175189795,
-        193.99994089136567
+        -441.9999762597952,
+        193.99994089136578
       ],
       "size": [
         480,
-        484.5
+        469.578125
       ],
       "flags": {},
       "order": 3,
@@ -211,8 +212,8 @@
       "id": 4,
       "type": "CheckpointLoaderSimple",
       "pos": [
-        61.81711912089844,
-        223.38755641274227
+        61.8171191208985,
+        223.38755641274247
       ],
       "size": [
         378,
@@ -275,7 +276,7 @@
       "type": "EmptyLatentImage",
       "pos": [
         625.9999835479282,
-        830.000020092602
+        830.0000200926021
       ],
       "size": [
         378,
@@ -316,7 +317,7 @@
       "type": "CLIPTextEncode",
       "pos": [
         488.47000103661117,
-        490.2803993434736
+        490.28039934347385
       ],
       "size": [
         510.328125,
@@ -353,7 +354,7 @@
         }
       },
       "widgets_values": [
-        " B C D E G H I J K M N P Q R S V X Y Z\nCurves, splines"
+        " B C D E G H I J K M N P Q R S V X Y Z\ncars\nautosports\nsports\n"
       ],
       "color": "#223",
       "bgcolor": "#335"
@@ -362,12 +363,12 @@
       "id": 6,
       "type": "CLIPTextEncode",
       "pos": [
-        494.2982468635039,
-        248.48756569127474
+        494.29835265490937,
+        248.4884721847625
       ],
       "size": [
-        507.40625,
-        125
+        525.625,
+        258.3125
       ],
       "flags": {},
       "order": 6,
@@ -400,7 +401,7 @@
         }
       },
       "widgets_values": [
-        "a sharp dark logo with the word \"autoflow\" in bold clean font, directly below the text is a geometric 3D logo  of glass nodes made of a glowing teal light, minimal flat design,photo realistic, 3d Render, dark background, professional, 4k \n\n text saying \"AUTOFLOW\" \"AutoFlow\", \"autoflow\", \"Auto Flow\", \"AUTO FLOW\"\n"
+        "a sharp dark logo with the word \"autograph\" in bold clean font, nodes interconnected with edges, directly below the text is a geometric 3D logo, simple, clean, minimal flat design,photo realistic, 3d Render, white background, professional, 4k \\n\\n text saying \"AUTOGRAPH\" \"AutoGraph\", \"autograph\", \"Auto Graph\", \"AUTO GRAPH\"\n"
       ],
       "color": "#232",
       "bgcolor": "#353"
@@ -410,11 +411,11 @@
       "type": "KSampler",
       "pos": [
         1066.6569983883576,
-        279.77684241853194
+        279.77684241853206
       ],
       "size": [
         378,
-        418.796875
+        388.796875
       ],
       "flags": {},
       "order": 8,
@@ -462,14 +463,22 @@
         }
       },
       "widgets_values": [
-        696969,
+        700,
         "fixed",
         69,
         6.9,
         "euler",
         "normal",
         1
-      ]
+      ],
+      "_meta": {
+        "seeds": {
+          "3068": "3d-struct",
+          "2343": "hand-sketch",
+          "1041": "bold A-carabiner",
+          "700": "original"
+        }
+      }
     }
   ],
   "links": [
@@ -590,10 +599,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.44218252181616663,
+      "scale": 1.0426432563169878,
       "offset": [
-        1311.498639927576,
-        531.9904614332921
+        101.38029246433945,
+        24.65719546127071
       ]
     },
     "frontendVersion": "1.36.14",

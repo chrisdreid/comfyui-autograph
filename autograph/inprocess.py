@@ -1,4 +1,4 @@
-"""autoflow.inprocess
+"""autograph.inprocess
 
 Experimental in-process execution for ComfyUI (target: ComfyUI 0.9.2).
 
@@ -439,7 +439,7 @@ def _init_comfyui_runtime(*, init_extra_nodes: bool = False) -> None:
         )
 
     try:
-        # Trigger common imports used by autoflow direct-mode.
+        # Trigger common imports used by autograph direct-mode.
         import comfy.samplers  # noqa: F401
         import comfy.sd  # noqa: F401
         _ensure_promptserver_instance()
@@ -576,7 +576,7 @@ def _call_execute(
 def execute_prompt(
     prompt: Dict[str, Any],
     *,
-    client_id: str = "autoflow",
+    client_id: str = "autograph",
     prompt_id: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -624,7 +624,7 @@ def execute_prompt(
 
     mode = None
     if isinstance(extra, dict):
-        mode = extra.get("autoflow_inprocess_mode")
+        mode = extra.get("AUTOGRAPH_inprocess_mode")
     mode = (str(mode) if mode is not None else "nodes").strip().lower()
 
     def _infer_outputs_from_disk(prompt_dict: Dict[str, Any], *, since_ts: float) -> Dict[str, Any]:
@@ -854,7 +854,7 @@ def execute_prompt(
     if server_obj is not None:
         try:
             send_fn = getattr(server_obj, "send_sync", None) or getattr(server_obj, "send", None)
-            if callable(send_fn) and not getattr(send_fn, "_autoflow_wrapped", False):
+            if callable(send_fn) and not getattr(send_fn, "_AUTOGRAPH_wrapped", False):
 
                 def _wrapped_send(*args: Any, **kwargs: Any):
                     # Try to parse common shapes like (event_type, data) or (sid, event_type, data).
@@ -872,7 +872,7 @@ def execute_prompt(
                         )
                     return send_fn(*args, **kwargs)
 
-                setattr(_wrapped_send, "_autoflow_wrapped", True)
+                setattr(_wrapped_send, "_AUTOGRAPH_wrapped", True)
                 if getattr(server_obj, "send_sync", None) is send_fn:
                     server_obj.send_sync = _wrapped_send  # type: ignore[attr-defined]
                 elif getattr(server_obj, "send", None) is send_fn:

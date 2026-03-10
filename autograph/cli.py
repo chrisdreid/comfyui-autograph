@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CLI entrypoint for the autoflow package.
+CLI entrypoint for the autograph package.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ def _csv(s: str):
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="autoflow", description="Convert ComfyUI workspace workflow.json to API payload, and optionally submit.")
+    p = argparse.ArgumentParser(prog="autograph", description="Convert ComfyUI workspace workflow.json to API payload, and optionally submit.")
 
     p.add_argument("--input-path", "-i", default=None, help="Input workflow.json (workspace) or a PNG with embedded workflow metadata")
     p.add_argument("--output-path", "-o", default=None, help="Output path for workflow-api.json")

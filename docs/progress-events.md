@@ -1,6 +1,6 @@
-# Live progress events (WebSocket)
+﻿# Live progress events (WebSocket)
 
-If you pass `wait=True` and `on_event=...`, autoflow opens ComfyUI's WebSocket and streams events into your callback.
+If you pass `wait=True` and `on_event=...`, autograph opens ComfyUI's WebSocket and streams events into your callback.
 
 ```mermaid
 flowchart  LR
@@ -23,7 +23,7 @@ flowchart LR
 
 Sometimes ComfyUI completes without producing a terminal websocket frame (common when everything is cached, or when you're queued and the WS stays quiet).
 
-In those cases, autoflow will probe `GET /history/<prompt_id>` and emit a **synthetic** terminal event:
+In those cases, autograph will probe `GET /history/<prompt_id>` and emit a **synthetic** terminal event:
 
 - `type="completed"` (still a normal completed event)
 - `detected_by="history"` (marker so you can tell it wasn't a literal WS frame)
@@ -35,14 +35,14 @@ In those cases, autoflow will probe `GET /history/<prompt_id>` and emit a **synt
 
 ## WebSocket idle timeout (prevent hangs)
 
-autoflow includes an idle timeout so a silent websocket does not hang forever:
+autograph includes an idle timeout so a silent websocket does not hang forever:
 
-- Env var: `AUTOFLOW_WS_IDLE_TIMEOUT_S` (default 5s)
-- When the websocket is silent beyond the idle timeout, autoflow falls back to `/history` polling.
+- Env var: `AUTOGRAPH_WS_IDLE_TIMEOUT_S` (default 5s)
+- When the websocket is silent beyond the idle timeout, autograph falls back to `/history` polling.
 
 ```python
 # api
-from autoflow import ApiFlow, ProgressPrinter
+from autograph import ApiFlow, ProgressPrinter
 
 api = ApiFlow("workflow.json")
 api.submit(server_url="http://localhost:8188", wait=True, on_event=ProgressPrinter())
@@ -50,10 +50,10 @@ api.submit(server_url="http://localhost:8188", wait=True, on_event=ProgressPrint
 
 ```bash
 # cli (default progress is enabled automatically when waiting)
-python -m autoflow --submit --input-path workflow.json --server-url http://localhost:8188 --save-images outputs_progress --filepattern frame.###.png
+python -m autograph --submit --input-path workflow.json --server-url http://localhost:8188 --save-images outputs_progress --filepattern frame.###.png
 
 # Disable progress output:
-python -m autoflow --submit --input-path workflow.json --server-url http://localhost:8188 --no-progress --save-images outputs_no_progress --filepattern frame.###.png
+python -m autograph --submit --input-path workflow.json --server-url http://localhost:8188 --no-progress --save-images outputs_no_progress --filepattern frame.###.png
 ```
 
 ## Combine callbacks
@@ -68,7 +68,7 @@ flowchart LR
 
 ```python
 # api
-from autoflow import ApiFlow, ProgressPrinter, chain_callbacks
+from autograph import ApiFlow, ProgressPrinter, chain_callbacks
 
 def my_cb(ev):
     print(ev.get("type"), ev.get("prompt_id"))

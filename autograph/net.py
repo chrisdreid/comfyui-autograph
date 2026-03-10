@@ -1,4 +1,4 @@
-"""autoflow.net
+"""autograph.net
 
 Stdlib-only HTTP helpers for talking to a ComfyUI server.
 
@@ -62,14 +62,14 @@ def resolve_comfy_server_url(server_url: Optional[str]) -> str:
     Resolve ComfyUI server URL for submit operations.
 
     We intentionally do NOT default to localhost here; submit() should only run when the
-    user explicitly provides a URL or sets AUTOFLOW_COMFYUI_SERVER_URL.
+    user explicitly provides a URL or sets AUTOGRAPH_COMFYUI_SERVER_URL.
     """
     if server_url:
         return server_url
-    env = os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+    env = os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
     if env:
         return env
-    raise ValueError("Missing server URL. Pass server_url= or set AUTOFLOW_COMFYUI_SERVER_URL.")
+    raise ValueError("Missing server URL. Pass server_url= or set AUTOGRAPH_COMFYUI_SERVER_URL.")
 
 
 

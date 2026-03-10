@@ -1,12 +1,12 @@
-# Contributing to comfyui-autoflow
+﻿# Contributing to comfyui-autograph
 
 Thanks for your interest in contributing! Here's how to get started.
 
 ## Development Setup
 
 ```bash
-git clone https://github.com/chrisdreid/comfyui-autoflow.git
-cd comfyui-autoflow
+git clone https://github.com/chrisdreid/comfyui-autograph.git
+cd comfyui-autograph
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
@@ -27,7 +27,7 @@ python examples/unittests/main.py --stage 8 --non-interactive --no-browser
 
 What to expect:
 - **154 tests** across 15 stages: conversion, node access, widgets, bypass, fixtures, and more
-- **HTML report** generated at `autoflow-test-suite/outputs/index.html`
+- **HTML report** generated at `autograph-test-suite/outputs/index.html`
 - **Exit code**: `0` on success, non-zero on failure
 - Stages 5 (fixtures) and 6 (server) are skipped unless `--fixtures-dir` / `--server-url` are provided
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-autoflow — Modular Test Suite
+autograph — Modular Test Suite
 ==============================
 
 Slim orchestrator that auto-discovers test modules and runs them in order.
@@ -121,7 +121,7 @@ def _check_server(url: Optional[str]) -> Optional[str]:
 def _check_comfyui_modules() -> Optional[str]:
     """Return ComfyUI root path if importable, else None."""
     try:
-        from autoflow.convert import _detect_comfyui_root_from_imports
+        from autograph.convert import _detect_comfyui_root_from_imports
         root = _detect_comfyui_root_from_imports()
         return str(root) if root else None
     except Exception:
@@ -138,13 +138,13 @@ def _check_binary(name: str, override: Optional[str] = None) -> Optional[str]:
 
 def detect_environment(args) -> Dict[str, Any]:
     """Probe for all optional environments and return a summary dict."""
-    server_url = args.server_url or os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+    server_url = args.server_url or os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
 
     # Interactive prompts
     fixtures_dir = args.fixtures_dir
     if not args.non_interactive:
         if not fixtures_dir:
-            default_fixtures = _REPO_ROOT / "autoflow-test-suite" / "fixtures"
+            default_fixtures = _REPO_ROOT / "autograph-test-suite" / "fixtures"
             hint = f" [{default_fixtures}]" if default_fixtures.is_dir() else ""
             ans = input(f"\nFixtures directory{hint} (Enter for default, 'skip' to skip): ").strip()
             if ans.lower() == "skip":
@@ -232,7 +232,7 @@ def detect_environment(args) -> Dict[str, Any]:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
-    parser = argparse.ArgumentParser(description="autoflow — Modular Test Suite")
+    parser = argparse.ArgumentParser(description="autograph — Modular Test Suite")
     parser.add_argument("--non-interactive", action="store_true",
                         help="Skip all prompted stages (CI mode)")
     parser.add_argument("--fixtures-dir", type=str, default=None,
@@ -280,7 +280,7 @@ def main() -> int:
     elif args.fixtures_dir:
         output_dir = Path(args.fixtures_dir).parent / "outputs"
     else:
-        output_dir = _REPO_ROOT / "autoflow-test-suite" / "outputs"
+        output_dir = _REPO_ROOT / "autograph-test-suite" / "outputs"
 
     if not args.no_clean:
         clean_output_dir(output_dir)
@@ -324,7 +324,7 @@ def main() -> int:
     collector = ResultCollector()
 
     print(f"\n{'='*60}")
-    print("  autoflow — Modular Test Suite")
+    print("  autograph — Modular Test Suite")
     print(f"{'='*60}")
     print(f"  Running {len(run_modules)} {mode_label.lower()}(s)...\n")
 

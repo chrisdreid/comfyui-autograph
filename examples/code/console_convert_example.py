@@ -7,7 +7,7 @@ ComfyUI server.
 
 Resolution order:
 - CLI args override all
-- else environment variables (AUTOFLOW_*)
+- else environment variables (AUTOGRAPH_*)
 - else defaults
 """
 
@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from autoflow import Flow
+from autograph import Flow
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -31,7 +31,7 @@ def main(argv: Optional[list] = None) -> int:
         default=None,
         help=(
             "Path to node_info JSON. "
-            "If omitted and AUTOFLOW_COMFYUI_SERVER_URL is set, fetches from server."
+            "If omitted and AUTOGRAPH_COMFYUI_SERVER_URL is set, fetches from server."
         ),
     )
     parser.add_argument(
@@ -66,10 +66,10 @@ def main(argv: Optional[list] = None) -> int:
     if args.node_info:
         node_info_path = Path(args.node_info)
     else:
-        env_obj = os.environ.get("AUTOFLOW_NODE_INFO_PATH")
+        env_obj = os.environ.get("AUTOGRAPH_NODE_INFO_PATH")
         if env_obj:
             node_info_path = Path(env_obj)
-        # If neither provided, will use AUTOFLOW_COMFYUI_SERVER_URL if set
+        # If neither provided, will use AUTOGRAPH_COMFYUI_SERVER_URL if set
 
     # Determine output path
     if args.output_path:

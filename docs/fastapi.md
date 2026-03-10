@@ -1,4 +1,4 @@
-# FastAPI integration
+﻿# FastAPI integration
 
 This repo includes a full service + client example:
 - server: `examples/code/fastapi_example.py`
@@ -16,13 +16,13 @@ flowchart  LR
 
 ```python
 from fastapi import FastAPI
-import autoflow
+import autograph
 
 app = FastAPI()
 
 @app.post("/convert")
 async def convert(workflow: dict):
-    result = autoflow.convert_workflow_with_errors(workflow)
+    result = autograph.convert_workflow_with_errors(workflow)
     return {
         "success": result.ok,
         "api_data": dict(result.data) if result.data else None,

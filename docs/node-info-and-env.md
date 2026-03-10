@@ -1,8 +1,8 @@
-# NodeInfo + env vars
+﻿# NodeInfo + env vars
 
-`NodeInfo` is the schema ComfyUI returns from `GET /object_info`. autoflow uses it to translate a workspace workflow into an API payload.
+`NodeInfo` is the schema ComfyUI returns from `GET /object_info`. autograph uses it to translate a workspace workflow into an API payload.
 
-## How autoflow resolves `node_info`
+## How autograph resolves `node_info`
 
 There are 4 ways to provide node info. All produce the same result — a valid `ApiFlow` ready for editing or submission.
 
@@ -16,7 +16,7 @@ flowchart TB
     A["① Server URL<br/>(auto-fetch)"] 
     B["② Saved file<br/>(node_info.json)"]
     C["③ Direct modules<br/>(ComfyUI venv)"]
-    D["④ Env var<br/>(AUTOFLOW_NODE_INFO_SOURCE)"]
+    D["④ Env var<br/>(AUTOGRAPH_NODE_INFO_SOURCE)"]
   end
 
   node_info_sources --> convert
@@ -27,17 +27,17 @@ flowchart TB
 | ① | **Server URL** | `ApiFlow("workflow.json")` | Running ComfyUI + env var | Day-to-day work |
 | ② | **Saved file** | `ApiFlow("workflow.json", node_info="node_info.json")` | One-time server fetch | Offline / reproducible |
 | ③ | **Direct modules** | `ApiFlow("workflow.json", node_info="modules")` | ComfyUI repo on `PYTHONPATH` | Serverless / CI |
-| ④ | **Env var auto** | `ApiFlow("workflow.json")` + `AUTOFLOW_NODE_INFO_SOURCE` | Depends on value | Advanced / flexible |
+| ④ | **Env var auto** | `ApiFlow("workflow.json")` + `AUTOGRAPH_NODE_INFO_SOURCE` | Depends on value | Advanced / flexible |
 
 ---
 
 ### ① Server URL (most common)
 
-Set `AUTOFLOW_COMFYUI_SERVER_URL` once and node_info is auto-fetched from your running ComfyUI server. No explicit `node_info=` needed.
+Set `AUTOGRAPH_COMFYUI_SERVER_URL` once and node_info is auto-fetched from your running ComfyUI server. No explicit `node_info=` needed.
 
 ```mermaid
 flowchart LR
-  env["AUTOFLOW_COMFYUI_SERVER_URL"] --> convert["ApiFlow(...)"]
+  env["AUTOGRAPH_COMFYUI_SERVER_URL"] --> convert["ApiFlow(...)"]
   comfy["ComfyUI server"] --> obj["/object_info"]
   obj --> convert
   convert --> api["ApiFlow"]
@@ -45,15 +45,15 @@ flowchart LR
 
 ```bash
 # Set once (Linux/macOS)
-export AUTOFLOW_COMFYUI_SERVER_URL="http://localhost:8188"
+export AUTOGRAPH_COMFYUI_SERVER_URL="http://localhost:8188"
 ```
 
 ```python
 # api
 import os
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
-os.environ["AUTOFLOW_COMFYUI_SERVER_URL"] = "http://localhost:8188"
+os.environ["AUTOGRAPH_COMFYUI_SERVER_URL"] = "http://localhost:8188"
 api = ApiFlow("workflow.json")
 api.save("workflow-api.json")
 ```
@@ -74,7 +74,7 @@ flowchart LR
 
 ```python
 # api
-from autoflow import NodeInfo
+from autograph import NodeInfo
 
 # Fetch from server and save in one call
 NodeInfo.fetch(server_url="http://localhost:8188", output_path="node_info.json")
@@ -82,14 +82,14 @@ NodeInfo.fetch(server_url="http://localhost:8188", output_path="node_info.json")
 
 ```bash
 # cli
-python -m autoflow --download-node-info-path node_info.json --server-url http://localhost:8188
+python -m autograph --download-node-info-path node_info.json --server-url http://localhost:8188
 ```
 
 **Step 2: Convert offline (no server needed)**
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json", node_info="node_info.json")
 api.save("workflow-api.json")
@@ -97,7 +97,7 @@ api.save("workflow-api.json")
 
 ```bash
 # cli
-python -m autoflow --input-path workflow.json --output-path workflow-api.json --node-info-path node_info.json
+python -m autograph --input-path workflow.json --output-path workflow-api.json --node-info-path node_info.json
 ```
 
 ---
@@ -111,7 +111,7 @@ If you're in a ComfyUI environment (repo + venv), build node_info from local Pyt
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json", node_info="modules")
 api.save("workflow-api.json")
@@ -121,7 +121,7 @@ You can also build a `NodeInfo` object directly:
 
 ```python
 # api
-from autoflow import NodeInfo
+from autograph import NodeInfo
 
 oi = NodeInfo.from_comfyui_modules()
 # Equivalent shorthand:
@@ -132,26 +132,26 @@ Related: [Serverless execution](execute.md)
 
 ---
 
-### ④ Env var auto-resolution (`AUTOFLOW_NODE_INFO_SOURCE`)
+### ④ Env var auto-resolution (`AUTOGRAPH_NODE_INFO_SOURCE`)
 
-Set `AUTOFLOW_NODE_INFO_SOURCE` to auto-resolve node_info when none is explicitly provided.
+Set `AUTOGRAPH_NODE_INFO_SOURCE` to auto-resolve node_info when none is explicitly provided.
 
 ```bash
 # Use server fetch (most common auto mode)
-export AUTOFLOW_NODE_INFO_SOURCE=fetch
+export AUTOGRAPH_NODE_INFO_SOURCE=fetch
 
 # Or use local modules
-export AUTOFLOW_NODE_INFO_SOURCE=modules
+export AUTOGRAPH_NODE_INFO_SOURCE=modules
 
 # Or use a saved file
-export AUTOFLOW_NODE_INFO_SOURCE=/path/to/node_info.json
+export AUTOGRAPH_NODE_INFO_SOURCE=/path/to/node_info.json
 ```
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
-# node_info resolved automatically from AUTOFLOW_NODE_INFO_SOURCE
+# node_info resolved automatically from AUTOGRAPH_NODE_INFO_SOURCE
 api = ApiFlow("workflow.json")
 ```
 
@@ -159,9 +159,9 @@ Supported values:
 
 | Value | Behavior |
 |-------|----------|
-| `fetch` | Use `server_url` / `AUTOFLOW_COMFYUI_SERVER_URL` if set; otherwise fall back to modules |
+| `fetch` | Use `server_url` / `AUTOGRAPH_COMFYUI_SERVER_URL` if set; otherwise fall back to modules |
 | `modules` | Use local ComfyUI modules (`NodeInfo.from_comfyui_modules()`) |
-| `server` | Require `server_url` / `AUTOFLOW_COMFYUI_SERVER_URL`; error if missing |
+| `server` | Require `server_url` / `AUTOGRAPH_COMFYUI_SERVER_URL`; error if missing |
 | file path | Load from the specified `node_info.json` file |
 
 ---
@@ -180,14 +180,14 @@ Supported values:
 
 ## Polymorphic inputs
 
-autoflow normalizes `node_info` inputs through a shared resolver, so you can pass:
+autograph normalizes `node_info` inputs through a shared resolver, so you can pass:
 - a dict-like `NodeInfo` object
 - a file path (`str` or `Path`)
 - a URL
 - `"modules"` / `"from_comfyui_modules"` for direct module loading
 
 Server URLs are normalized the same way: empty strings are treated as missing, and
-`AUTOFLOW_COMFYUI_SERVER_URL` is used when `server_url` is omitted.
+`AUTOGRAPH_COMFYUI_SERVER_URL` is used when `server_url` is omitted.
 
 ## Optional env vars (defaults)
 
@@ -195,38 +195,38 @@ These env vars override library defaults (precedence is always: args → env →
 
 | Env var | Type | Meaning |
 |--------|------|---------|
-| `AUTOFLOW_COMFYUI_SERVER_URL` | str | Default ComfyUI server URL |
-| `AUTOFLOW_NODE_INFO_SOURCE` | str | Source for `node_info`: `fetch`, `modules`, `server`, or file path |
-| `AUTOFLOW_TIMEOUT_S` | int | Default HTTP timeout seconds |
-| `AUTOFLOW_POLL_INTERVAL_S` | float | Poll interval for wait/poll loops |
-| `AUTOFLOW_WAIT_TIMEOUT_S` | int | Default wait timeout seconds |
-| `AUTOFLOW_SUBMIT_CLIENT_ID` | str | Default `client_id` for submit |
-| `AUTOFLOW_SUBGRAPH_MAX_DEPTH` | int | Default max depth for subgraph flattening |
-| `AUTOFLOW_FIND_MAX_DEPTH` | int | Default max depth for `flow.find(...)` / `flow.nodes.find(...)` recursion |
+| `AUTOGRAPH_COMFYUI_SERVER_URL` | str | Default ComfyUI server URL |
+| `AUTOGRAPH_NODE_INFO_SOURCE` | str | Source for `node_info`: `fetch`, `modules`, `server`, or file path |
+| `AUTOGRAPH_TIMEOUT_S` | int | Default HTTP timeout seconds |
+| `AUTOGRAPH_POLL_INTERVAL_S` | float | Poll interval for wait/poll loops |
+| `AUTOGRAPH_WAIT_TIMEOUT_S` | int | Default wait timeout seconds |
+| `AUTOGRAPH_SUBMIT_CLIENT_ID` | str | Default `client_id` for submit |
+| `AUTOGRAPH_SUBGRAPH_MAX_DEPTH` | int | Default max depth for subgraph flattening |
+| `AUTOGRAPH_FIND_MAX_DEPTH` | int | Default max depth for `flow.find(...)` / `flow.nodes.find(...)` recursion |
 
 ## Deprecated / experimental: model layer switch
 
-autoflow currently supports an **internal** model implementation switch via an env var.
+autograph currently supports an **internal** model implementation switch via an env var.
 
 - This is **experimental** and may be removed before release.
 - Only use it for local exploration/testing (don't depend on it in production code).
 
-**Env var**: `AUTOFLOW_MODEL_LAYER`
+**Env var**: `AUTOGRAPH_MODEL_LAYER`
 
-- `AUTOFLOW_MODEL_LAYER=flowtree` (default): wrapper-based, terminal-first navigation layer
-- `AUTOFLOW_MODEL_LAYER=models`: legacy-parity dict-subclass layer
+- `AUTOGRAPH_MODEL_LAYER=flowtree` (default): wrapper-based, terminal-first navigation layer
+- `AUTOGRAPH_MODEL_LAYER=models`: legacy-parity dict-subclass layer
 
-Set it **before importing** `autoflow`:
+Set it **before importing** `autograph`:
 
 ```bash
 # Linux/macOS
-export AUTOFLOW_MODEL_LAYER=models
+export AUTOGRAPH_MODEL_LAYER=models
 
 # Windows PowerShell
-$env:AUTOFLOW_MODEL_LAYER = "models"
+$env:AUTOGRAPH_MODEL_LAYER = "models"
 
 # Windows CMD
-set AUTOFLOW_MODEL_LAYER=models
+set AUTOGRAPH_MODEL_LAYER=models
 ```
 
 

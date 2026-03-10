@@ -1,4 +1,4 @@
-"""autoflow package
+"""autograph package
 
 Public API is re-exported here for convenience.
 """
@@ -10,6 +10,7 @@ from .model_layer import (  # noqa: F401
     Workflow,
     NodeInfo,
 )
+from .flowtree import Node, NodeBlueprint, NodeTypeRef  # noqa: F401
 from .models import WidgetValue  # noqa: F401
 from .connection import Connection  # noqa: F401
 from .convert import (  # noqa: F401
@@ -75,4 +76,7 @@ __all__ = [
     "force_recompute",
     "WidgetValue",
     "Connection",
+    "NodeBlueprint",
+    "Node",
+    "NodeTypeRef",
 ]

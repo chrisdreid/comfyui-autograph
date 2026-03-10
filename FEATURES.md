@@ -1,4 +1,4 @@
-# FEATURES (quick glance)
+﻿# FEATURES (quick glance)
 
 ### What if you could `load, edit, and submit` ComfyUI workflows without ever exporting an API workflow from the GUI?
 
@@ -8,9 +8,9 @@
 
 ### What if you could `render` comfyui node workflows with all of the above features, `without ever launching the comfyui server`?
 
-- # Let me introduce `comfyui-autoflow`
+- # Let me introduce `comfyui-autograph`
 
-`autoflow` is **production-ready ComfyUI automation**, built by production for production.
+`autograph` is **production-ready ComfyUI automation**, built by production for production.
 
 This page is intentionally short. Each feature links to the relevant docs for details.
 
@@ -42,7 +42,7 @@ This page is intentionally short. Each feature links to the relevant docs for de
   - Details: [`docs/load-vs-convert.md`](docs/load-vs-convert.md)
 
 - **Extract from PNG metadata**: Load `Flow` / `ApiFlow` directly from ComfyUI PNG outputs (embedded workflow data).  
-  - Details: [`README.md`](README.md) (PNG examples), related: [`autoflow/pngmeta.py`](autoflow/pngmeta.py)
+  - Details: [`README.md`](README.md) (PNG examples), related: [`autograph/pngmeta.py`](autograph/pngmeta.py)
 
 ---
 

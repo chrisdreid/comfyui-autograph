@@ -1,4 +1,4 @@
-"""autoflow.results
+"""autograph.results
 
 Submission + registered output helpers:
 - submit API payloads (/prompt)
@@ -591,7 +591,7 @@ class SubmissionResult(dict):
 
         out = FilesResult([it if isinstance(it, FileResult) else FileResult(it) for it in out_items])
         try:
-            setattr(out, "_autoflow_server_url", self._server_url)
+            setattr(out, "_AUTOGRAPH_server_url", self._server_url)
         except Exception:
             pass
         self["files"] = out
@@ -863,7 +863,7 @@ class FilesResult(list):
         return out
 
     def _server_url(self) -> Optional[str]:
-        v = getattr(self, "_autoflow_server_url", None)
+        v = getattr(self, "_AUTOGRAPH_server_url", None)
         return v if isinstance(v, str) and v else None
 
     def _ensure_bytes(self, *, timeout: int, refresh: bool = False) -> None:
@@ -972,7 +972,7 @@ class FilesResult(list):
             raise ValueError("No files to save (empty selection, or missing refs).")
 
         tmp = FilesResult(items)
-        setattr(tmp, "_autoflow_server_url", self._server_url())
+        setattr(tmp, "_AUTOGRAPH_server_url", self._server_url())
         tmp._ensure_bytes(timeout=timeout, refresh=refresh)
         items2: List[FileResult] = [it if isinstance(it, FileResult) else FileResult(it) for it in tmp]
 

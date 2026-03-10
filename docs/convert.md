@@ -1,6 +1,6 @@
-# Convert (workflow.json → workflow-api.json)
+﻿# Convert (workflow.json → workflow-api.json)
 
-autoflow takes a ComfyUI **workspace** `workflow.json` and converts it into a ComfyUI **API payload** (the renderable blueprint, often called `workflow-api.json`).
+autograph takes a ComfyUI **workspace** `workflow.json` and converts it into a ComfyUI **API payload** (the renderable blueprint, often called `workflow-api.json`).
 
 ```mermaid
 flowchart LR
@@ -12,13 +12,13 @@ flowchart LR
 
 ## Subgraphs
 
-If your workspace `workflow.json` uses ComfyUI **subgraphs** (`definitions.subgraphs` with UUID-typed nodes), autoflow will **inline/flatten** them during conversion so the resulting API payload contains only real ComfyUI node `class_type`s.
+If your workspace `workflow.json` uses ComfyUI **subgraphs** (`definitions.subgraphs` with UUID-typed nodes), autograph will **inline/flatten** them during conversion so the resulting API payload contains only real ComfyUI node `class_type`s.
 
 ## Reading + writing values in subgraphs
 
 ComfyUI subgraphs are a **workspace** feature. The **API payload does not contain subgraphs**; ComfyUI exports API payloads by flattening subgraphs into normal nodes (often using node IDs like `18:17:3` to preserve the subgraph path).
 
-autoflow mirrors this:
+autograph mirrors this:
 - Convert-time: workspace subgraphs are flattened so your `ApiFlow` is always a normal API payload.
 - Editing time: you can still navigate and update subgraph nodes using the workspace `Flow` (before converting), or using the flattened API node IDs / search helpers (after converting).
 
@@ -27,7 +27,7 @@ autoflow mirrors this:
 Use `Flow` when you want to locate nodes by subgraph title/type and update values in-place before conversion:
 
 ```python
-from autoflow import Flow
+from autograph import Flow
 
 flow = Flow.load("workflow.json")
 
@@ -45,7 +45,7 @@ ksamplers[0].widgets_values[0] = 123  # seed (workspace uses widgets_values list
 In an `ApiFlow`, subgraphs are already flattened. You can edit by node type, by node id/path, or by searching:
 
 ```python
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 # Convert workspace → API payload (ApiFlow auto-detects workspace format)
 api = ApiFlow("workflow.json", node_info="node_info.json")
@@ -65,7 +65,7 @@ Convert `workflow.json` by fetching schema from a running ComfyUI server.
 
 ```mermaid
 flowchart LR
-  env["AUTOFLOW_COMFYUI_SERVER_URL"] --> workflowObj["ApiFlow(...)"]
+  env["AUTOGRAPH_COMFYUI_SERVER_URL"] --> workflowObj["ApiFlow(...)"]
   comfy["ComfyUI server"] --> objectInfo["/object_info"]
   objectInfo --> workflowObj
   workflowObj --> apiFlow["ApiFlow"]
@@ -74,17 +74,17 @@ flowchart LR
 ```python
 # api
 import os
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
-os.environ["AUTOFLOW_COMFYUI_SERVER_URL"] = "http://localhost:8188"
+os.environ["AUTOGRAPH_COMFYUI_SERVER_URL"] = "http://localhost:8188"
 api = ApiFlow("workflow.json")
 api.save("workflow-api.json")
 ```
 
 ```bash
 # cli
-export AUTOFLOW_COMFYUI_SERVER_URL="http://localhost:8188"
-python -m autoflow --input-path workflow.json --output-path workflow-api.json
+export AUTOGRAPH_COMFYUI_SERVER_URL="http://localhost:8188"
+python -m autograph --input-path workflow.json --output-path workflow-api.json
 ```
 
 ## Direct module conversion (no server)
@@ -98,13 +98,13 @@ Related:
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json", node_info="modules")
 api.save("workflow-api.json")
 ```
 
-You can also set `AUTOFLOW_NODE_INFO_SOURCE=modules` to auto-resolve `node_info` when omitted.
+You can also set `AUTOGRAPH_NODE_INFO_SOURCE=modules` to auto-resolve `node_info` when omitted.
 
 ## Offline conversion (saved `node_info.json`)
 
@@ -119,7 +119,7 @@ flowchart LR
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json", node_info="node_info.json")
 api.save("workflow-api.json")
@@ -127,7 +127,7 @@ api.save("workflow-api.json")
 
 ```bash
 # cli
-python -m autoflow --input-path workflow.json --output-path workflow-api.json --node-info-path node_info.json
+python -m autograph --input-path workflow.json --output-path workflow-api.json --node-info-path node_info.json
 ```
 
 ## Strict loading (when you want control)
@@ -142,7 +142,7 @@ flowchart LR
 
 ```python
 # api
-from autoflow import Flow
+from autograph import Flow
 
 flow = Flow.load("workflow.json")      # strict workspace loader
 # ... edit flow dict ...

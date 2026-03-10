@@ -1,25 +1,29 @@
-<!-- Keep version below in sync with autoflow/version.py -->
+﻿<!-- Keep version below in sync with autograph/version.py -->
 ```text
-ComfyUI 
- █████╗ ██╗   ██╗████████╗ ██████╗ ███████╗██╗      ██████╗ ██╗    ██╗
-██╔══██╗██║   ██║╚══██╔══╝██╔═══██╗██╔════╝██║     ██╔═══██╗██║    ██║
-███████║██║   ██║   ██║   ██║   ██║█████╗  ██║     ██║   ██║██║ █╗ ██║
-██╔══██║██║   ██║   ██║   ██║   ██║██╔══╝  ██║     ██║   ██║██║███╗██║
-██║  ██║╚██████╔╝   ██║   ╚██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝
-╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝ 
-                                                       version: 1.5.0
+                      $$\                                                      $$\       
+                      $$ |                                                     $$ |      
+ $$$$$$\  $$\   $$\ $$$$$$\    $$$$$$\   $$$$$$\   $$$$$$\  $$$$$$\   $$$$$$\  $$$$$$$\  
+ \____$$\ $$ |  $$ |\_$$  _|  $$  __$$\ $$  __$$\ $$  __$$\ \____$$\ $$  __$$\ $$  __$$\ 
+ $$$$$$$ |$$ |  $$ |  $$ |    $$ /  $$ |$$ /  $$ |$$ |  \__|$$$$$$$ |$$ /  $$ |$$ |  $$ |
+$$  __$$ |$$ |  $$ |  $$ |$$\ $$ |  $$ |$$ |  $$ |$$ |     $$  __$$ |$$ |  $$ |$$ |  $$ |
+\$$$$$$$ |\$$$$$$  |  \$$$$  |\$$$$$$  |\$$$$$$$ |$$ |     \$$$$$$$ |$$$$$$$  |$$ |  $$ |
+ \_______| \______/    \____/  \______/  \____$$ |\__|      \_______|$$  ____/ \__|  \__|
+                                        $$\   $$ |                   $$ |                
+                                        \$$$$$$  |                   $$ |                
+                                         \______/                    \__|                
+ComfyUI                                                                      version: 2.0.0
 ```
 
-[![PyPI version](https://img.shields.io/pypi/v/comfyui-autoflow?color=blue)](https://pypi.org/project/comfyui-autoflow/)
-[![Python](https://img.shields.io/pypi/pyversions/comfyui-autoflow)](https://pypi.org/project/comfyui-autoflow/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/chrisdreid/comfyui-autoflow/blob/main/LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/chrisdreid/comfyui-autoflow?style=social)](https://github.com/chrisdreid/comfyui-autoflow)
-[![GitHub issues](https://img.shields.io/github/issues/chrisdreid/comfyui-autoflow)](https://github.com/chrisdreid/comfyui-autoflow/issues)
-[![Downloads](https://img.shields.io/pypi/dm/comfyui-autoflow)](https://pypi.org/project/comfyui-autoflow/)
+[![PyPI version](https://img.shields.io/pypi/v/comfyui-autograph?color=blue)](https://pypi.org/project/comfyui-autograph/)
+[![Python](https://img.shields.io/pypi/pyversions/comfyui-autograph)](https://pypi.org/project/comfyui-autograph/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/chrisdreid/comfyui-autograph/blob/main/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/chrisdreid/comfyui-autograph?style=social)](https://github.com/chrisdreid/comfyui-autograph)
+[![GitHub issues](https://img.shields.io/github/issues/chrisdreid/comfyui-autograph)](https://github.com/chrisdreid/comfyui-autograph/issues)
+[![Downloads](https://img.shields.io/pypi/dm/comfyui-autograph)](https://pypi.org/project/comfyui-autograph/)
 
 ```mermaid
 flowchart LR
-  workflowJson["workflow.json"] --> autoflow["autoflow"]
+  workflowJson["workflow.json"] --> autograph["autograph"]
    --> apiFlow[workflow-api.json]
 ```
 ---
@@ -32,13 +36,13 @@ flowchart LR
 
 ### What if you could `render` comfyui node workflows with all of the above features, `without ever launching the comfyui server`?
 
-- # Let me introduce `comfyui-autoflow`
+- # Let me introduce `comfyui-autograph`
 
 ---
-# autoflow
+# autograph
 
-Skip the GUI. `autoflow` handles the backend so you can automate/pipeline your ComfyUI renderables with full control through the entire conversion and submission process.
-`autoflow` is a small and efficient, pure **Python package** (stdlib-only +extendable) for ComfyUI automation that gives you access to renderable conversion with or without ComfyUI.
+Skip the GUI. `autograph` handles the backend so you can automate/pipeline your ComfyUI renderables with full control through the entire conversion and submission process.
+`autograph` is a small and efficient, pure **Python package** (stdlib-only +extendable) for ComfyUI automation that gives you access to renderable conversion with or without ComfyUI.
 
 ## Features
 
@@ -77,11 +81,11 @@ ComfyUI uses two JSON formats:
 | **Workspace** | `workflow.json` | The UI-editable graph with node positions, colors, widgets. What you save from ComfyUI. |
 | **API Payload** | `workflow-api.json` | The renderable blueprint—just nodes + inputs, ready for `POST /prompt`. This is what `ApiFlow` represents. |
 
-**autoflow converts Workspace → API Payload** (or loads an existing API Payload directly).
+**autograph converts Workspace → API Payload** (or loads an existing API Payload directly).
 
 ```mermaid
 flowchart LR
-  workspace["workflow.json (workspace)"] --> convert["autoflow"]
+  workspace["workflow.json (workspace)"] --> convert["autograph"]
   convert --> payload["workflow-api.json (API payload / ApiFlow)"]
   payload --> submit["POST /prompt"]
   submit --> comfy["ComfyUI renders"]
@@ -90,18 +94,18 @@ flowchart LR
 ## Installation
 
 ```bash
-pip install comfyui-autoflow
+pip install comfyui-autograph
 ```
 
-Then use with `python -m autoflow ...` or `import autoflow` from Python.
-- Optional: set `AUTOFLOW_COMFYUI_SERVER_URL` once (then `server_url` / `--server-url` become optional):
-  - Linux/macOS: `export AUTOFLOW_COMFYUI_SERVER_URL="http://localhost:8188"`
-  - Windows PowerShell: `$env:AUTOFLOW_COMFYUI_SERVER_URL = "http://localhost:8188"`
-  - Windows CMD: `set AUTOFLOW_COMFYUI_SERVER_URL=http://localhost:8188`
-  - Python: `import os; os.environ["AUTOFLOW_COMFYUI_SERVER_URL"] = "http://localhost:8188"`
-- Optional: set `AUTOFLOW_NODE_INFO_SOURCE=modules|fetch|server|/path/to/node-info.json` to auto-resolve `node_info`.
+Then use with `python -m autograph ...` or `import autograph` from Python.
+- Optional: set `AUTOGRAPH_COMFYUI_SERVER_URL` once (then `server_url` / `--server-url` become optional):
+  - Linux/macOS: `export AUTOGRAPH_COMFYUI_SERVER_URL="http://localhost:8188"`
+  - Windows PowerShell: `$env:AUTOGRAPH_COMFYUI_SERVER_URL = "http://localhost:8188"`
+  - Windows CMD: `set AUTOGRAPH_COMFYUI_SERVER_URL=http://localhost:8188`
+  - Python: `import os; os.environ["AUTOGRAPH_COMFYUI_SERVER_URL"] = "http://localhost:8188"`
+- Optional: set `AUTOGRAPH_NODE_INFO_SOURCE=modules|fetch|server|/path/to/node-info.json` to auto-resolve `node_info`.
 ---
-# `autoflow` - Quick Start
+# `autograph` - Quick Start
 
 ### Get `node-info.json` (optional, one-time)
 
@@ -114,8 +118,8 @@ flowchart LR
 ```
 
 ```python
-# api — set AUTOFLOW_COMFYUI_SERVER_URL first (see Installation above)
-from autoflow import NodeInfo
+# api — set AUTOGRAPH_COMFYUI_SERVER_URL first (see Installation above)
+from autograph import NodeInfo
 
 node_info = NodeInfo('fetch')
 node_info.save('node-info.json')
@@ -123,11 +127,11 @@ node_info.save('node-info.json')
 
 ```bash
 # cli
-python -m autoflow --download-node-info-path node-info.json
+python -m autograph --download-node-info-path node-info.json
 ```
 
 - Direct modules (no server): `NodeInfo.from_comfyui_modules()` builds `node_info` from local ComfyUI nodes.
-- Env source (optional): set `AUTOFLOW_NODE_INFO_SOURCE=modules|fetch|server|/path/to/node-info.json`.
+- Env source (optional): set `AUTOGRAPH_NODE_INFO_SOURCE=modules|fetch|server|/path/to/node-info.json`.
 
 - More: [`docs/node-info-and-env.md`](docs/node-info-and-env.md)
 ## Convert live (using running ComfyUI)
@@ -136,20 +140,20 @@ Convert `workflow.json` by fetching `/object_info` from your running ComfyUI ser
 
 ```mermaid
 flowchart LR
-  env["AUTOFLOW_COMFYUI_SERVER_URL"] --> wf["Flow(...)"]
+  env["AUTOGRAPH_COMFYUI_SERVER_URL"] --> wf["Flow(...)"]
   wf --> flow["Flow"]
   comfy["ComfyUI server"] --> obj["/object_info"]
   obj --> wf
 ```
-If environment variable `AUTOFLOW_COMFYUI_SERVER_URL` is set, `server_url` becomes optional.
+If environment variable `AUTOGRAPH_COMFYUI_SERVER_URL` is set, `server_url` becomes optional.
 
-If `AUTOFLOW_NODE_INFO_SOURCE` is set, `Flow(...)` / `ApiFlow(...)` will auto-resolve `node_info` when none is provided.
+If `AUTOGRAPH_NODE_INFO_SOURCE` is set, `Flow(...)` / `ApiFlow(...)` will auto-resolve `node_info` when none is provided.
 
 ```python
 # api — use Flow to work with workflow.json natively
-from autoflow import Flow
+from autograph import Flow
 
-flow = Flow("workflow.json")   # uses AUTOFLOW_COMFYUI_SERVER_URL
+flow = Flow("workflow.json")   # uses AUTOGRAPH_COMFYUI_SERVER_URL
 flow.save("workflow-out.json") # stays in workspace format
 
 # or convert to API payload
@@ -161,7 +165,7 @@ api.save("workflow-api.json")
 
 ```bash
 # cli
-python -m autoflow --input-path workflow.json --output-path workflow-api.json
+python -m autograph --input-path workflow.json --output-path workflow-api.json
 ```
 
 - More: [`docs/convert.md`](docs/convert.md), [`docs/node-info-and-env.md`](docs/node-info-and-env.md)
@@ -183,7 +187,7 @@ flowchart LR
 
 ```python
 # api — Flow-first: load, optionally edit, then convert
-from autoflow import Flow
+from autograph import Flow
 
 flow = Flow("workflow.json", node_info="node-info.json")
 flow.save("workflow-out.json")       # save workspace format
@@ -195,10 +199,10 @@ api.save("workflow-api.json")         # save API format
 ```bash
 # cli
 # Offline mode (saved node_info)
-python -m autoflow --input-path workflow.json --output-path workflow-api.json --node-info-path node-info.json
+python -m autograph --input-path workflow.json --output-path workflow-api.json --node-info-path node-info.json
 
 # Short form (flags)
-python -m autoflow -i workflow.json -o workflow-api.json -f node-info.json
+python -m autograph -i workflow.json -o workflow-api.json -f node-info.json
 ```
 
 - More: [`docs/convert.md`](docs/convert.md)
@@ -208,7 +212,7 @@ python -m autoflow -i workflow.json -o workflow-api.json -f node-info.json
 Create and wire ComfyUI workflows entirely from Python — full tab completion, Pythonic dict-like views, and multiple connection syntaxes.
 
 ```python
-from autoflow import Flow, NodeInfo
+from autograph import Flow, NodeInfo
 
 flow = Flow(node_info="node-info.json")
 
@@ -251,7 +255,7 @@ ComfyUI embeds workflow metadata in PNG outputs. Extract it directly—no extern
 
 ```python
 # api
-from autoflow import Flow, ApiFlow
+from autograph import Flow, ApiFlow
 
 # From PNG file
 api_flow = ApiFlow.load("ComfyUI_00001_.png")  # extracts API payload
@@ -276,16 +280,16 @@ flowchart LR
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json")
-api.saveimage.inputs.filename_prefix='autoflow'
+api.saveimage.inputs.filename_prefix='autograph'
 res = api.submit(server_url="http://localhost:8188", wait=True)
 images = res.fetch_images()
 images.save("outputs/frame.###.png")
 ```
 
-You can also set an output default with env `AUTOFLOW_OUTPUT_PATH` and then just provide a `filename=` template:
+You can also set an output default with env `AUTOGRAPH_OUTPUT_PATH` and then just provide a `filename=` template:
 
 ```python
 # api
@@ -295,7 +299,7 @@ images.save(filename="frame.{src_frame}.png")  # or "frame.###.png" for zero-ind
 ```bash
 # cli
 # Prints prompt_id first, then (if saving) the written file paths. Progress logs go to stderr.
-python -m autoflow --submit --input-path workflow.json --server-url http://localhost:8188 \
+python -m autograph --submit --input-path workflow.json --server-url http://localhost:8188 \
   --save-images outputs --filepattern "frame.###.png" --index-offset 1001
 ```
 
@@ -345,7 +349,7 @@ If you're running inside a ComfyUI environment (repo + venv), you can run workfl
 |----------|-------|-------------|
 | `--input-path` | `-i` | Input workflow JSON file path |
 | `--output-path` | `-o` | Output API format JSON file path |
-| `--server-url` | | ComfyUI server URL (or set `AUTOFLOW_COMFYUI_SERVER_URL`) |
+| `--server-url` | | ComfyUI server URL (or set `AUTOGRAPH_COMFYUI_SERVER_URL`) |
 | `--node-info-path` | `-f` | Path to saved `node_info.json` file |
 | `--download-node-info-path` | | Download `/object_info` and save to file |
 | `--submit` | | Submit converted API payload to ComfyUI |

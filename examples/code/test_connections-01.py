@@ -6,8 +6,8 @@ Usage:
     python test_v2.py --server-url http://localhost:8188
 
 Env var hierarchy:
-    1. AUTOFLOW_NODE_INFO_SOURCE  (file path)
-    2. AUTOFLOW_COMFYUI_SERVER_URL (server fetch)
+    1. AUTOGRAPH_NODE_INFO_SOURCE  (file path)
+    2. AUTOGRAPH_COMFYUI_SERVER_URL (server fetch)
     3. CLI args override env vars
 """
 import argparse
@@ -15,8 +15,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from autoflow import Flow, NodeInfo
-from autoflow.connection import (
+from autograph import Flow, NodeInfo
+from autograph.connection import (
     get_input_default,
     get_connection_input_names,
     _is_connection_only_input,
@@ -32,15 +32,15 @@ def load_node_info(args):
         return NodeInfo("fetch", server_url=args.server_url)
 
     # Env vars
-    src = os.environ.get("AUTOFLOW_NODE_INFO_SOURCE")
+    src = os.environ.get("AUTOGRAPH_NODE_INFO_SOURCE")
     if src:
         return NodeInfo(src)
-    url = os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+    url = os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
     if url:
         return NodeInfo("fetch", server_url=url)
 
     print("ERROR: No node_info source configured.")
-    print("  Set AUTOFLOW_NODE_INFO_SOURCE or AUTOFLOW_COMFYUI_SERVER_URL env var,")
+    print("  Set AUTOGRAPH_NODE_INFO_SOURCE or AUTOGRAPH_COMFYUI_SERVER_URL env var,")
     print("  or pass --node-info <path> or --server-url <url>")
     sys.exit(1)
 
@@ -207,7 +207,7 @@ def main():
         results = ni.find("sampler")
         print(f"  ni.find('sampler') → {len(results)} results")
         for r in results[:3]:
-            print(f"    {getattr(r, '_autoflow_addr', '?')}")
+            print(f"    {getattr(r, '_AUTOGRAPH_addr', '?')}")
         assert len(results) >= 1, "Should find at least 1 sampler"
         print(f"  ✅ ni.find() works")
         passed += 1

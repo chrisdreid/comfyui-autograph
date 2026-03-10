@@ -1,4 +1,4 @@
-"""autoflow.dag
+"""autograph.dag
 
 Stdlib-only DAG helpers for Flow (workspace) and ApiFlow (API payload).
 

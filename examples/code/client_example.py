@@ -14,15 +14,15 @@ import urllib.error
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
 
-DEFAULT_AUTOFLOW_API_BASE_URL = "http://localhost:8000"
+DEFAULT_AUTOGRAPH_API_BASE_URL = "http://localhost:8000"
 
 def resolve_api_base_url(cli_value: Optional[str] = None) -> str:
     """
     Resolve the API base URL using: CLI arg -> env -> hardcoded default.
 
-    Env var: AUTOFLOW_API_BASE_URL
+    Env var: AUTOGRAPH_API_BASE_URL
     """
-    return (cli_value or os.environ.get("AUTOFLOW_API_BASE_URL", DEFAULT_AUTOFLOW_API_BASE_URL)).rstrip("/")
+    return (cli_value or os.environ.get("AUTOGRAPH_API_BASE_URL", DEFAULT_AUTOGRAPH_API_BASE_URL)).rstrip("/")
 
 class WorkflowConverterClient:
     """Client for the ComfyUI Workflow Converter API."""
@@ -259,7 +259,7 @@ if __name__ == "__main__":
         "--base-url",
         default=None,
         help="Base URL for the Workflow Converter API. "
-             "Resolution order: --base-url, then env AUTOFLOW_API_BASE_URL, else default http://localhost:8000.",
+             "Resolution order: --base-url, then env AUTOGRAPH_API_BASE_URL, else default http://localhost:8000.",
     )
     args = parser.parse_args()
 

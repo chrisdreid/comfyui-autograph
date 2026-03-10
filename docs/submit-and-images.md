@@ -1,8 +1,8 @@
-# Submit + images
+﻿# Submit + images
 
 ## Note for ComfyUI Node Developers
 
-Only **registered outputs** can be accessed via `autoflow`.
+Only **registered outputs** can be accessed via `autograph`.
 
 - ComfyUI tracks outputs per prompt execution
 - Nodes must return structured metadata describing what they produced
@@ -44,7 +44,7 @@ flowchart LR
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json")
 res = api.submit(server_url="http://localhost:8188", wait=False)
@@ -54,14 +54,14 @@ print(res.prompt_id)  # job handle
 ```bash
 # cli
 # No-wait mode (prints prompt_id and exits)
-python -m autoflow --submit --input-path workflow.json --server-url http://localhost:8188 --no-wait
+python -m autograph --submit --input-path workflow.json --server-url http://localhost:8188 --no-wait
 
 # Wait + save images (prints prompt_id, then written paths). Progress logs go to stderr.
-python -m autoflow --submit --input-path workflow.json --server-url http://localhost:8188 --save-images outputs_submit_images --filepattern frame.###.png --index-offset 1001
+python -m autograph --submit --input-path workflow.json --server-url http://localhost:8188 --save-images outputs_submit_images --filepattern frame.###.png --index-offset 1001
 
 # Wait + save registered files (prints prompt_id, then written paths).
 # Use --output-types to narrow. (The default sample workflow reliably produces "images".)
-python -m autoflow --submit --input-path workflow.json --server-url http://localhost:8188 --save-files outputs_submit_files --output-types images
+python -m autograph --submit --input-path workflow.json --server-url http://localhost:8188 --save-files outputs_submit_files --output-types images
 ```
 
 ## Wait + fetch images
@@ -78,7 +78,7 @@ flowchart LR
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json")
 res = api.submit(server_url="http://localhost:8188", wait=True)
@@ -92,7 +92,7 @@ Use `fetch_outputs=True` to fetch images during submit (saves an extra call).
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json")
 res = api.submit(
@@ -113,11 +113,11 @@ res = api.submit(
 | `poll_interval` | 0.5 | Seconds between `/history` polls |
 
 WebSocket idle timeout:
-- `AUTOFLOW_WS_IDLE_TIMEOUT_S` (default 5s) prevents hangs when the WS is silent and falls back to `/history`.
+- `AUTOGRAPH_WS_IDLE_TIMEOUT_S` (default 5s) prevents hangs when the WS is silent and falls back to `/history`.
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json")
 res = api.submit(
@@ -138,7 +138,7 @@ If target is a directory, files retain ComfyUI's rendered filenames.
 # api
 # Offline-friendly demo ImagesResult (uses the local output.png from docs-test sandbox)
 from pathlib import Path
-from autoflow import ImagesResult, ImageResult
+from autograph import ImagesResult, ImageResult
 
 png_bytes = Path("output.png").read_bytes()
 images = ImagesResult(
@@ -163,7 +163,7 @@ If target contains `#` placeholders, each image gets a numbered filename.
 # api
 # Offline-friendly demo ImagesResult (uses the local output.png from docs-test sandbox)
 from pathlib import Path
-from autoflow import ImagesResult, ImageResult
+from autograph import ImagesResult, ImageResult
 
 png_bytes = Path("output.png").read_bytes()
 images = ImagesResult(
@@ -188,7 +188,7 @@ If you want to carry ComfyUI's original frame number (best-effort parsed from th
 # api
 # If ComfyUI saved: frame_0042.png, frame_0043.png
 from pathlib import Path
-from autoflow import ImagesResult, ImageResult
+from autograph import ImagesResult, ImageResult
 
 png_bytes = Path("output.png").read_bytes()
 images = ImagesResult(
@@ -206,7 +206,7 @@ If you want padding, you can use Python's format specifiers **when `{src_frame}`
 ```python
 # api
 from pathlib import Path
-from autoflow import ImagesResult, ImageResult
+from autograph import ImagesResult, ImageResult
 
 png_bytes = Path("output.png").read_bytes()
 images = ImagesResult(
@@ -225,7 +225,7 @@ images.save("outputs", filename="render.{src_frame:03d}.png")
 
 ```python
 # api
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow.json")
 res = api.submit(server_url="http://localhost:8188", wait=True)
@@ -251,7 +251,7 @@ Save in a different format by using a different extension (requires Pillow).
 # api
 # ComfyUI outputs PNG, save as JPEG
 # This requires Pillow to actually run; keep as a copy/paste example.
-from autoflow import ImagesResult, ImageResult
+from autograph import ImagesResult, ImageResult
 from pathlib import Path
 
 png_bytes = Path("output.png").read_bytes()
@@ -269,7 +269,7 @@ For advanced conversions, pass paths to external tools.
 ```python
 # api
 # These require external binaries; keep as copy/paste examples.
-from autoflow import ImagesResult, ImageResult
+from autograph import ImagesResult, ImageResult
 from pathlib import Path
 
 png_bytes = Path("output.png").read_bytes()
@@ -292,7 +292,7 @@ def example_ffmpeg(images: ImagesResult) -> None:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `output_path` | str/Path | Directory or pattern (e.g., `frame.###.png`). Defaults to env `AUTOFLOW_OUTPUT_PATH`, else `./`. |
+| `output_path` | str/Path | Directory or pattern (e.g., `frame.###.png`). Defaults to env `AUTOGRAPH_OUTPUT_PATH`, else `./`. |
 | `filename` | str | Optional filename template (used when `output_path` is a directory). |
 | `regex_parser` | str/`re.Pattern` | Optional regex to parse the source filename and expose named groups as tokens. |
 | `overwrite` | bool | Overwrite existing files (default: False) |

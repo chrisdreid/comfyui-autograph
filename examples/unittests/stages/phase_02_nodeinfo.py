@@ -50,10 +50,10 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import NodeInfo, Flow, ApiFlow
-    conv = importlib.import_module("autoflow.convert")
-    from autoflow.models import NodeInfo as LegacyNodeInfo
-    from autoflow.origin import NodeInfoOrigin
+    from autograph import NodeInfo, Flow, ApiFlow
+    conv = importlib.import_module("autograph.convert")
+    from autograph.models import NodeInfo as LegacyNodeInfo
+    from autograph.origin import NodeInfoOrigin
 
     ni = NodeInfo(BUILTIN_NODE_INFO)
 
@@ -182,12 +182,12 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     def t_2_12():
         oi = LegacyNodeInfo({})
-        setattr(oi, "_autoflow_origin", NodeInfoOrigin(requested="modules", resolved="modules", via_env=False, modules_root="/abs/ComfyUI"))
+        setattr(oi, "_AUTOGRAPH_origin", NodeInfoOrigin(requested="modules", resolved="modules", via_env=False, modules_root="/abs/ComfyUI"))
         assert oi.source == "modules:/abs/ComfyUI", f"source = {oi.source!r}"
-        setattr(oi, "_autoflow_origin", NodeInfoOrigin(requested="modules", resolved="modules", via_env=True, modules_root="/abs/ComfyUI"))
+        setattr(oi, "_AUTOGRAPH_origin", NodeInfoOrigin(requested="modules", resolved="modules", via_env=True, modules_root="/abs/ComfyUI"))
         assert oi.source == "env:modules:/abs/ComfyUI", f"source = {oi.source!r}"
         return {
-            "input": "NodeInfo._autoflow_origin with modules_root",
+            "input": "NodeInfo._AUTOGRAPH_origin with modules_root",
             "output": f"source={oi.source}",
             "result": "✓ formats modules_root + env prefix",
         }
@@ -295,7 +295,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     def t_2_23():
         ni_p = builtin_node_info_path()
-        from autoflow.models import Flow as LFlow
+        from autograph.models import Flow as LFlow
         f = LFlow.load(_BUNDLED_WORKFLOW)
         assert isinstance(f.source, str) and f.source.startswith("file:"), f"f.source = {f.source!r}"
         f2 = LFlow(_BUNDLED_WORKFLOW, node_info=ni_p)
@@ -310,7 +310,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     def t_2_24():
         ni_p = builtin_node_info_path()
-        from autoflow.models import Workflow as LWorkflow
+        from autograph.models import Workflow as LWorkflow
         api = LWorkflow(str(_BUNDLED_WORKFLOW), node_info=ni_p)
         assert isinstance(api.source, str) and api.source.startswith("converted_from("), f"api.source = {api.source!r}"
         assert api.node_info is not None
@@ -332,7 +332,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
         code = f"""
 import os
 from pathlib import Path
-from autoflow import Flow, ApiFlow
+from autograph import Flow, ApiFlow
 
 flow_path = "{wf_p}"
 oi_path = "{ni_p}"
@@ -346,7 +346,7 @@ print(api.source)
 print(api.node_info.source)
 """
         try:
-            out = _run_subprocess(code, {"AUTOFLOW_MODEL_LAYER": "flowtree"})
+            out = _run_subprocess(code, {"AUTOGRAPH_MODEL_LAYER": "flowtree"})
         except (subprocess.CalledProcessError, RuntimeError) as e:
             raise SkipTest(f"subprocess failed: {e}")
         assert out[0].startswith("file:"), out[0]
@@ -364,7 +364,7 @@ print(api.node_info.source)
         ni_path = str(builtin_node_info_path())
         code = f"""
 import os, sys
-from autoflow import NodeInfo
+from autograph import NodeInfo
 
 oi_path = "{ni_path}"
 
@@ -381,11 +381,11 @@ o3 = NodeInfo.load(oi_path)
 print("KSampler" in o3)
 """
         try:
-            # Strip AUTOFLOW env vars so NodeInfo() starts truly empty
+            # Strip AUTOGRAPH env vars so NodeInfo() starts truly empty
             out = _run_subprocess(code, {
-                "AUTOFLOW_MODEL_LAYER": "flowtree",
-                "AUTOFLOW_NODEINFO_SOURCE": "",
-                "AUTOFLOW_COMFYUI_SERVER_URL": "",
+                "AUTOGRAPH_MODEL_LAYER": "flowtree",
+                "AUTOGRAPH_NODEINFO_SOURCE": "",
+                "AUTOGRAPH_COMFYUI_SERVER_URL": "",
             })
         except (subprocess.CalledProcessError, RuntimeError) as e:
             raise SkipTest(f"subprocess failed: {e}")
@@ -404,7 +404,7 @@ print("KSampler" in o3)
         code = f"""
 import os
 from pathlib import Path
-from autoflow import ApiFlow, NodeInfo
+from autograph import ApiFlow, NodeInfo
 
 oi_path = "{ni_path}"
 
@@ -413,7 +413,7 @@ api = ApiFlow({{"1": {{"class_type": "KSampler", "inputs": {{"seed": 1}}}}}}, no
 print(api.node_info.source)
 """
         try:
-            out = _run_subprocess(code, {"AUTOFLOW_MODEL_LAYER": "flowtree"})
+            out = _run_subprocess(code, {"AUTOGRAPH_MODEL_LAYER": "flowtree"})
         except (subprocess.CalledProcessError, RuntimeError) as e:
             raise SkipTest(f"subprocess failed: {e}")
         assert out[0].startswith("file:"), out[0]
@@ -425,7 +425,7 @@ print(api.node_info.source)
     _run_test(collector, stage, "2.27", "Flowtree NodeInfo passthrough keeps source", t_2_27)
 
     # -----------------------------------------------------------------------
-    # 2.28  NodeInfo('fetch') + AUTOFLOW_COMFYUI_SERVER_URL env var
+    # 2.28  NodeInfo('fetch') + AUTOGRAPH_COMFYUI_SERVER_URL env var
     # -----------------------------------------------------------------------
 
     def t_2_28():
@@ -435,8 +435,8 @@ import os, sys, json
 from unittest.mock import patch
 from pathlib import Path
 
-# Ensure autoflow.convert is the real module for patching
-import autoflow.convert as conv_mod
+# Ensure autograph.convert is the real module for patching
+import autograph.convert as conv_mod
 
 # Load a real node_info dict for the mock to return
 ni_data = json.loads(Path("{ni_path}").read_text(encoding="utf-8"))
@@ -444,20 +444,20 @@ ni_data = json.loads(Path("{ni_path}").read_text(encoding="utf-8"))
 def fake_fetch(server_url, timeout=0):
     return ni_data
 
-os.environ["AUTOFLOW_COMFYUI_SERVER_URL"] = "http://test.invalid:8188"
+os.environ["AUTOGRAPH_COMFYUI_SERVER_URL"] = "http://test.invalid:8188"
 
 with patch.object(conv_mod, "fetch_node_info", fake_fetch), \
      patch.object(conv_mod, "node_info_from_comfyui_modules", side_effect=RuntimeError("blocked")):
-    from autoflow import NodeInfo
+    from autograph import NodeInfo
     oi = NodeInfo("fetch")
     print(len(oi))
     print("KSampler" in oi)
-    origin = getattr(oi._oi, "_autoflow_origin", None)
+    origin = getattr(oi._oi, "_AUTOGRAPH_origin", None)
     print(origin.resolved if origin else "no-origin")
     print(origin.effective_server_url if origin else "no-url")
 """
         try:
-            out = _run_subprocess(code, {"AUTOFLOW_MODEL_LAYER": "flowtree"})
+            out = _run_subprocess(code, {"AUTOGRAPH_MODEL_LAYER": "flowtree"})
         except (subprocess.CalledProcessError, RuntimeError) as e:
             raise SkipTest(f"subprocess failed: {{e}}")
         assert int(out[0].strip()) > 0, f"Expected >0 types, got {{out[0]!r}}"
@@ -465,10 +465,10 @@ with patch.object(conv_mod, "fetch_node_info", fake_fetch), \
         assert out[2].strip() == "server", f"Expected resolved='server', got {{out[2]!r}}"
         assert "test.invalid" in out[3], f"Expected env URL in origin, got {{out[3]!r}}"
         return {
-            "input": "NodeInfo('fetch') + AUTOFLOW_COMFYUI_SERVER_URL env var",
+            "input": "NodeInfo('fetch') + AUTOGRAPH_COMFYUI_SERVER_URL env var",
             "output": f"{{len(out)}} checks passed, resolved=server",
             "result": "✓ env var used for fetch",
         }
-    _run_test(collector, stage, "2.28", "NodeInfo('fetch') uses AUTOFLOW_COMFYUI_SERVER_URL", t_2_28)
+    _run_test(collector, stage, "2.28", "NodeInfo('fetch') uses AUTOGRAPH_COMFYUI_SERVER_URL", t_2_28)
 
     _print_stage_summary(collector, stage)

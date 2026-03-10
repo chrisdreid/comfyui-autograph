@@ -25,7 +25,7 @@ def load_node_info(source=None):
     """Load node_info from a file, server, or built-in fallback."""
     if source and source != "builtin":
         if source == "fetch":
-            from autoflow import NodeInfo
+            from autograph import NodeInfo
             ni = NodeInfo("fetch")
             return dict(ni)
         p = Path(source)

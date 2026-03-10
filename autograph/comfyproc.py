@@ -1,4 +1,4 @@
-"""autoflow.comfyproc
+"""autograph.comfyproc
 
 Tiny stdlib-only helpers to run a local ComfyUI server as a subprocess.
 

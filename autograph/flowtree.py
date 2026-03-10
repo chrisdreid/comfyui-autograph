@@ -1,8 +1,8 @@
-"""autoflow.flowtree
+"""autograph.flowtree
 
 Navigation-first model wrappers (non-dict subclasses).
 
-This is the default model layer (``AUTOFLOW_MODEL_LAYER=flowtree``).
+This is the default model layer (``AUTOGRAPH_MODEL_LAYER=flowtree``).
 """
 
 from __future__ import annotations
@@ -258,10 +258,10 @@ class ApiFlow(_MappingWrapper):
             )
             if oi_dict is not None:
                 oi_obj = _legacy.NodeInfo(oi_dict)
-                setattr(oi_obj, "_autoflow_origin", origin)
+                setattr(oi_obj, "_AUTOGRAPH_origin", origin)
                 s = getattr(oi_obj, "source", None)
                 if isinstance(s, str) and s:
-                    setattr(oi_obj, "_autoflow_source", s)
+                    setattr(oi_obj, "_AUTOGRAPH_source", s)
                 kwargs["node_info"] = oi_obj
         api = x if isinstance(x, _legacy.ApiFlow) else _legacy.ApiFlow(x, **kwargs)
         self._api = api
@@ -296,7 +296,7 @@ class ApiFlow(_MappingWrapper):
         if not isinstance(node, dict):
             raise KeyError(nid)
         p = _legacy.NodeProxy(node, nid, self._api)
-        object.__setattr__(p, "_autoflow_addr", nid)
+        object.__setattr__(p, "_AUTOGRAPH_addr", nid)
         return NodeRef(p, kind="api", addr=nid, group=None, index=None, dotpath=f'by_id("{nid}")', dictpath=[nid])
 
     def submit(self, *args: Any, **kwargs: Any):
@@ -387,6 +387,210 @@ class ApiFlow(_MappingWrapper):
         return getattr(self._api, "dag")
 
 
+class Node:
+    """Detached node — fully formed but not attached to any flow.
+
+    Created via ``n.KSampler(seed=42)``.  Has widgets, input slots, output
+    slots populated from ``node_info``.  Mutable.  Pass to
+    ``flow.add_node()`` to materialise (assigns ID + position).
+
+    The node can be stamped into multiple flows or copied freely.
+    """
+
+    __slots__ = ("_node_dict", "_ni_dict", "_class_type", "_widget_names")
+
+    def __init__(self, class_type: str, ni_dict: Dict[str, Any], **widget_overrides: Any):
+        from .connection import (
+            get_connection_input_names,
+            get_output_slots,
+            get_input_default,
+        )
+        from .convert import get_widget_input_names
+
+        if class_type not in ni_dict:
+            raise ValueError(f"Unknown node class '{class_type}'. Not found in node_info.")
+
+        type_info = ni_dict[class_type]
+
+        # ---- Build input slots (connection-only) ----
+        conn_inputs = get_connection_input_names(class_type, ni_dict)
+        input_slots = []
+        for name in conn_inputs:
+            spec = None
+            inputs_def = type_info.get("input", {})
+            for section in ["required", "optional"]:
+                section_inputs = inputs_def.get(section, {})
+                if isinstance(section_inputs, dict) and name in section_inputs:
+                    spec = section_inputs[name]
+                    break
+            slot_type = spec[0] if spec and isinstance(spec[0], str) else "*"
+            input_slots.append({"name": name, "type": slot_type, "link": None})
+
+        # ---- Build output slots ----
+        out_slots_info = get_output_slots(class_type, ni_dict)
+        output_slots = []
+        for idx, name, out_type in out_slots_info:
+            output_slots.append(
+                {"name": name, "type": out_type, "slot_index": idx, "links": []}
+            )
+
+        # ---- Build widgets_values ----
+        widget_names = get_widget_input_names(class_type, ni_dict, use_api=True)
+        widgets_values = []
+        inputs_def = type_info.get("input", {})
+        for wname in widget_names:
+            if wname in widget_overrides:
+                widgets_values.append(widget_overrides[wname])
+            else:
+                default = get_input_default(class_type, wname, ni_dict)
+                widgets_values.append(default)
+
+            # Frontend-injected follow-up widgets
+            spec = None
+            for section in ["required", "optional"]:
+                section_inputs = inputs_def.get(section, {})
+                if isinstance(section_inputs, dict) and wname in section_inputs:
+                    spec = section_inputs[wname]
+                    break
+            if spec and isinstance(spec, list) and len(spec) >= 2 and isinstance(spec[1], dict):
+                opts = spec[1]
+                if opts.get("control_after_generate"):
+                    cag_key = "control_after_generate"
+                    if cag_key in widget_overrides:
+                        widgets_values.append(widget_overrides[cag_key])
+                    else:
+                        widgets_values.append("randomize")
+
+        node_dict = {
+            "id": None,  # assigned by flow.add_node()
+            "type": class_type,
+            "pos": [0, 0],  # assigned by flow.add_node()
+            "size": [315, 170],
+            "flags": {},
+            "order": 0,
+            "mode": 0,
+            "inputs": input_slots,
+            "outputs": output_slots,
+            "properties": {"Node name for S&R": class_type},
+            "widgets_values": widgets_values,
+        }
+
+        object.__setattr__(self, "_node_dict", node_dict)
+        object.__setattr__(self, "_ni_dict", ni_dict)
+        object.__setattr__(self, "_class_type", class_type)
+        object.__setattr__(self, "_widget_names", list(widget_names))
+
+    @property
+    def type(self) -> str:
+        """Node class type (e.g. 'KSampler')."""
+        return self._class_type
+
+    @property
+    def class_type(self) -> str:
+        """Alias for :attr:`type` (backward compat with NodeBlueprint)."""
+        return self._class_type
+
+    @property
+    def inputs(self) -> List[str]:
+        """Input slot names (connection-only)."""
+        return [inp["name"] for inp in self._node_dict.get("inputs", [])]
+
+    @property
+    def outputs(self) -> List[str]:
+        """Output slot names."""
+        return [outp["name"] for outp in self._node_dict.get("outputs", [])]
+
+    @property
+    def widgets(self) -> Dict[str, Any]:
+        """Dict of {widget_name: value}."""
+        wv = self._node_dict.get("widgets_values", [])
+        result = {}
+        for i, name in enumerate(self._widget_names):
+            if i < len(wv):
+                result[name] = wv[i]
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        # Widget access
+        wv = object.__getattribute__(self, "_node_dict").get("widgets_values", [])
+        wnames = object.__getattribute__(self, "_widget_names")
+        for i, wname in enumerate(wnames):
+            if wname == name and i < len(wv):
+                return wv[i]
+        raise AttributeError(f"Node '{self._class_type}' has no widget '{name}'")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            return object.__setattr__(self, name, value)
+        # Widget set
+        wv = self._node_dict.get("widgets_values", [])
+        for i, wname in enumerate(self._widget_names):
+            if wname == name and i < len(wv):
+                wv[i] = value
+                return
+        raise AttributeError(f"Node '{self._class_type}' has no widget '{name}'")
+
+    def __dir__(self) -> List[str]:
+        base = {"type", "inputs", "outputs", "widgets", "to_dict"}
+        base.update(self._widget_names)
+        return sorted(base)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a copy of the underlying node dict."""
+        import copy
+        return copy.deepcopy(self._node_dict)
+
+    def __repr__(self) -> str:
+        w = self.widgets
+        args = ", ".join(f"{k}={v!r}" for k, v in w.items())
+        return f"Node({self._class_type!r}, {args})"
+
+
+# Backward compat alias
+NodeBlueprint = Node
+
+
+class NodeTypeRef:
+    """Callable type reference from NodeInfo.
+
+    ``n.KSampler`` returns this object.  It can be:
+
+    - Passed directly to ``flow.add_node(n.KSampler)`` as a type reference.
+    - Called to create a detached node: ``n.KSampler(seed=42)`` → ``Node``.
+    """
+
+    __slots__ = ("_view", "_class_type", "_ni_dict")
+
+    def __init__(self, view: Any, class_type: str, ni_dict: Dict[str, Any]):
+        self._view = view
+        self._class_type = class_type
+        self._ni_dict = ni_dict
+
+    def __call__(self, **widget_overrides: Any) -> Node:
+        """Create a detached :class:`Node` with pre-set widget values."""
+        return Node(self._class_type, self._ni_dict, **widget_overrides)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._view, name)
+
+    def __contains__(self, item: Any) -> bool:
+        return item in self._view
+
+    def __iter__(self):
+        return iter(self._view)
+
+    def __len__(self) -> int:
+        return len(self._view)
+
+    def __getitem__(self, key: Any) -> Any:
+        return self._view[key]
+
+    def __repr__(self) -> str:
+        return f"NodeTypeRef({self._class_type!r})"
+
+
 class Flow(_MappingWrapper):
     def __init__(self, x: Optional[Union[str, Path, bytes, Dict[str, Any], _legacy.Flow]] = None, **kwargs: Any):
         if "server_url" in kwargs:
@@ -410,10 +614,10 @@ class Flow(_MappingWrapper):
             )
             if oi_dict is not None:
                 oi_obj = _legacy.NodeInfo(oi_dict)
-                setattr(oi_obj, "_autoflow_origin", origin)
+                setattr(oi_obj, "_AUTOGRAPH_origin", origin)
                 s = getattr(oi_obj, "source", None)
                 if isinstance(s, str) and s:
-                    setattr(oi_obj, "_autoflow_source", s)
+                    setattr(oi_obj, "_AUTOGRAPH_source", s)
                 kwargs["node_info"] = oi_obj
         # When no flow data is provided, inject a builder skeleton so
         # add_node() / connect() / >> / save() all work out of the box.
@@ -445,7 +649,7 @@ class Flow(_MappingWrapper):
             warnings.warn(
                 "Flow created without node_info — widget access and tab completion will be limited.\n"
                 "Options:\n"
-                "  • Set AUTOFLOW_COMFYUI_SERVER_URL env var (auto-fetches)\n"
+                "  • Set AUTOGRAPH_COMFYUI_SERVER_URL env var (auto-fetches)\n"
                 "  • Pass node_info= to Flow()\n"
                 "  • Call flow.fetch_node_info(server_url=...)\n"
                 "See: docs/node-info-and-env.md",
@@ -614,7 +818,7 @@ class Flow(_MappingWrapper):
 
     def add_node(
         self,
-        class_type: str,
+        node: Any,
         **widget_overrides: Any,
     ) -> "NodeRef":
         """Add a new node to this flow.
@@ -622,8 +826,14 @@ class Flow(_MappingWrapper):
         Uses node_info to build input slots, output slots, and widgets_values.
         Widget defaults come from node_info; pass overrides as keyword args.
 
+        Accepts:
+            - ``str``: class type name (e.g. ``'KSampler'``).
+            - ``NodeTypeRef``: from ``n.KSampler`` (dot access on NodeInfo).
+            - ``NodeBlueprint``: from ``n.KSampler(seed=42)``.
+            - ``NodeRef``: copies an existing node into this flow.
+
         Args:
-            class_type: Node class type (e.g. 'KSampler').
+            node: What to add (see above).
             **widget_overrides: Widget values to override defaults.
 
         Returns:
@@ -641,6 +851,26 @@ class Flow(_MappingWrapper):
         )
         from .convert import get_widget_input_names
 
+        # ---- Dispatch: resolve class_type + merge overrides ----
+        if isinstance(node, Node):
+            return self._add_detached_node(node, **widget_overrides)
+        elif isinstance(node, NodeTypeRef):
+            class_type = node._class_type
+        elif isinstance(node, NodeRef):
+            return self._copy_node(node, **widget_overrides)
+        elif isinstance(node, str):
+            class_type = node
+        else:
+            # Legacy path: accept DictView with _AUTOGRAPH_addr
+            addr = getattr(node, "_AUTOGRAPH_addr", None)
+            if isinstance(addr, str):
+                class_type = addr
+            else:
+                raise TypeError(
+                    f"add_node() expects a string, NodeTypeRef, Node, or NodeRef. "
+                    f"Got {type(node).__name__}."
+                )
+
         ni = getattr(self._flow, "node_info", None)
         if ni is None:
             raise ValueError(
@@ -652,20 +882,9 @@ class Flow(_MappingWrapper):
         ni_dict = _json.loads(_json.dumps(dict(ni)))
 
         if class_type not in ni_dict:
-            # Accept spec objects from ni.CLIPTextEncode or ni.find()
-            addr = getattr(class_type, "_autoflow_addr", None)
-            if addr and addr in ni_dict:
-                class_type = addr
-            elif isinstance(class_type, str):
-                raise ValueError(
-                    f"Unknown node class '{class_type}'. Not found in node_info."
-                )
-            else:
-                raise ValueError(
-                    "Could not determine class_type from the provided object. "
-                    "Use ni.CLIPTextEncode (dot access on NodeInfo), ni.find(), "
-                    "or pass the string name directly."
-                )
+            raise ValueError(
+                f"Unknown node class '{class_type}'. Not found in node_info."
+            )
         type_info = ni_dict[class_type]
 
         # ---- Build input slots (connection-only inputs) ----
@@ -753,12 +972,147 @@ class Flow(_MappingWrapper):
 
         # Invalidate DAG cache if present
         try:
-            object.__delattr__(self._flow, "_autoflow_dag_cache")
+            object.__delattr__(self._flow, "_AUTOGRAPH_dag_cache")
         except (AttributeError, TypeError):
             pass
 
         # Build a NodeRef for chaining
         proxy = _legacy.FlowNodeProxy(node_dict, len(self._flow["nodes"]) - 1, self._flow)
+        return NodeRef(
+            proxy,
+            kind="flow",
+            addr=str(new_id),
+            group=class_type,
+            index=0,
+            dotpath=f"nodes.{class_type}[0]",
+            dictpath=["nodes", len(self._flow["nodes"]) - 1],
+            flow=self,
+        )
+
+    def add_nodes(self, nodes: List[Any]) -> List["NodeRef"]:
+        """Add multiple nodes at once.
+
+        Each element of *nodes* may be any type accepted by :meth:`add_node`
+        (string, NodeTypeRef, NodeBlueprint, or NodeRef).
+
+        Returns:
+            List of NodeRefs in the same order.
+        """
+        return [self.add_node(n) for n in nodes]
+
+    def _add_detached_node(
+        self,
+        node: "Node",
+        **widget_overrides: Any,
+    ) -> "NodeRef":
+        """Materialise a detached Node into this flow (new ID, position)."""
+        import copy as _copy
+        node_dict = _copy.deepcopy(node._node_dict)
+
+        # Assign fresh ID
+        last_id = self._flow.get("last_node_id", 0)
+        new_id = last_id + 1
+        self._flow["last_node_id"] = new_id
+        node_dict["id"] = new_id
+
+        # Assign fresh position
+        node_count = len(self._flow.get("nodes", []))
+        col = node_count % 4
+        row = node_count // 4
+        node_dict["pos"] = [col * 400, row * 300]
+        node_dict["order"] = node_count
+
+        # Apply call-site widget overrides
+        if widget_overrides:
+            wv = node_dict.get("widgets_values", [])
+            for i, wname in enumerate(node._widget_names):
+                if wname in widget_overrides and i < len(wv):
+                    wv[i] = widget_overrides[wname]
+
+        class_type = node_dict.get("type", "unknown")
+        self._flow.setdefault("nodes", []).append(node_dict)
+
+        # Invalidate DAG cache
+        try:
+            object.__delattr__(self._flow, "_AUTOGRAPH_dag_cache")
+        except (AttributeError, TypeError):
+            pass
+
+        proxy = _legacy.FlowNodeProxy(node_dict, len(self._flow["nodes"]) - 1, self._flow)
+        return NodeRef(
+            proxy,
+            kind="flow",
+            addr=str(new_id),
+            group=class_type,
+            index=0,
+            dotpath=f"nodes.{class_type}[0]",
+            dictpath=["nodes", len(self._flow["nodes"]) - 1],
+            flow=self,
+        )
+
+    def _copy_node(
+        self,
+        src: "NodeRef",
+        **widget_overrides: Any,
+    ) -> "NodeRef":
+        """Copy an existing node into this flow (new ID, default position)."""
+        try:
+            flow_data = object.__getattribute__(src, "_flow")
+            if flow_data is None:
+                flow_data = self
+            src_dict = src._find_node_dict(flow_data._flow)
+        except Exception:
+            raise ValueError(
+                "Could not extract node data from the provided NodeRef. "
+                "Ensure the node belongs to a flow."
+            )
+
+        import copy
+        node_dict = copy.deepcopy(src_dict)
+
+        # Assign fresh ID
+        last_id = self._flow.get("last_node_id", 0)
+        new_id = last_id + 1
+        self._flow["last_node_id"] = new_id
+        node_dict["id"] = new_id
+
+        # Assign fresh position
+        node_count = len(self._flow.get("nodes", []))
+        col = node_count % 4
+        row = node_count // 4
+        node_dict["pos"] = [col * 400, row * 300]
+
+        # Clear stale link references (connections don't carry over)
+        for inp in node_dict.get("inputs", []):
+            inp["link"] = None
+        for outp in node_dict.get("outputs", []):
+            outp["links"] = []
+
+        # Apply widget overrides
+        if widget_overrides and node_dict.get("widgets_values"):
+            ni = getattr(self._flow, "node_info", None)
+            if ni is not None:
+                import json as _json
+                ni_dict = _json.loads(_json.dumps(dict(ni)))
+                class_type = node_dict.get("type", "")
+                if class_type in ni_dict:
+                    from .convert import get_widget_input_names
+                    widget_names = get_widget_input_names(class_type, ni_dict, use_api=True)
+                    wv = node_dict["widgets_values"]
+                    for i, wname in enumerate(widget_names):
+                        if wname in widget_overrides and i < len(wv):
+                            wv[i] = widget_overrides[wname]
+
+        self._flow.setdefault("nodes", []).append(node_dict)
+
+        # Invalidate DAG cache
+        try:
+            object.__delattr__(self._flow, "_AUTOGRAPH_dag_cache")
+        except (AttributeError, TypeError):
+            pass
+
+        proxy = _legacy.FlowNodeProxy(node_dict, len(self._flow["nodes"]) - 1, self._flow)
+        class_type = node_dict.get("type", "unknown")
         return NodeRef(
             proxy,
             kind="flow",
@@ -837,7 +1191,7 @@ class Flow(_MappingWrapper):
 
         # Invalidate DAG cache
         try:
-            object.__delattr__(self._flow, "_autoflow_dag_cache")
+            object.__delattr__(self._flow, "_AUTOGRAPH_dag_cache")
         except (AttributeError, TypeError):
             pass
 
@@ -1152,10 +1506,10 @@ class NodeInfo(_MappingWrapper):
         - file path to node_info.json
         - URL to a JSON node_info
         - "modules" / "from_comfyui_modules" to load from local ComfyUI modules
-        - "fetch" / "server" when server_url (or AUTOFLOW_COMFYUI_SERVER_URL) is available
+        - "fetch" / "server" when server_url (or AUTOGRAPH_COMFYUI_SERVER_URL) is available
 
         Default behavior (when x and source are omitted):
-        - If AUTOFLOW_NODE_INFO_SOURCE (or server_url) is set, node_info is auto-resolved.
+        - If AUTOGRAPH_NODE_INFO_SOURCE (or server_url) is set, node_info is auto-resolved.
         - Otherwise, an empty NodeInfo is created (no error).
         """
         source = kwargs.pop("source", None)
@@ -1181,14 +1535,14 @@ class NodeInfo(_MappingWrapper):
                     "Could not resolve node_info. Options:\n"
                     "  • NodeInfo('fetch', server_url='http://localhost:8188')\n"
                     "  • NodeInfo('path/to/node_info.json')\n"
-                    "  • Set AUTOFLOW_COMFYUI_SERVER_URL env var and use NodeInfo('fetch')\n"
-                    "  • Set AUTOFLOW_NODE_INFO_SOURCE env var"
+                    "  • Set AUTOGRAPH_COMFYUI_SERVER_URL env var and use NodeInfo('fetch')\n"
+                    "  • Set AUTOGRAPH_NODE_INFO_SOURCE env var"
                 )
             oi = _legacy.NodeInfo(oi_dict)
-            setattr(oi, "_autoflow_origin", origin)
+            setattr(oi, "_AUTOGRAPH_origin", origin)
             s = getattr(oi, "source", None)
             if isinstance(s, str) and s:
-                setattr(oi, "_autoflow_source", s)
+                setattr(oi, "_AUTOGRAPH_source", s)
         else:
             oi_dict, _use_api, origin = resolve_node_info_with_origin(
                 None,
@@ -1201,10 +1555,10 @@ class NodeInfo(_MappingWrapper):
                 oi = _legacy.NodeInfo({})
             else:
                 oi = _legacy.NodeInfo(oi_dict)
-                setattr(oi, "_autoflow_origin", origin)
+                setattr(oi, "_AUTOGRAPH_origin", origin)
                 s = getattr(oi, "source", None)
                 if isinstance(s, str) and s:
-                    setattr(oi, "_autoflow_source", s)
+                    setattr(oi, "_AUTOGRAPH_source", s)
 
         self._oi = oi
         self._data = oi
@@ -1269,12 +1623,12 @@ class NodeInfo(_MappingWrapper):
 
     def __getattr__(self, name: str) -> Any:
         result = getattr(self._oi, name)
-        # Tag DictView results with the class_type so add_node() can resolve them
+        # Wrap class_type lookups as NodeTypeRef (callable + passable to add_node)
         if isinstance(result, _legacy.DictView) and name in self._oi:
-            try:
-                object.__setattr__(result, "_autoflow_addr", name)
-            except (AttributeError, TypeError):
-                pass
+            # Build a plain-dict ni_dict for Node construction
+            import json as _json
+            ni_dict = _json.loads(_json.dumps(dict(self._oi)))
+            return NodeTypeRef(result, name, ni_dict)
         return result
 
     def __dir__(self) -> list:
@@ -2667,7 +3021,7 @@ class NodeRef:
 
         # Invalidate DAG cache
         try:
-            object.__delattr__(flow_data, "_autoflow_dag_cache")
+            object.__delattr__(flow_data, "_AUTOGRAPH_dag_cache")
         except (AttributeError, TypeError):
             pass
 
@@ -2716,7 +3070,7 @@ class NodeRef:
 
         # Invalidate DAG cache
         try:
-            object.__delattr__(flow_data, "_autoflow_dag_cache")
+            object.__delattr__(flow_data, "_AUTOGRAPH_dag_cache")
         except (AttributeError, TypeError):
             pass
 
@@ -3040,7 +3394,7 @@ class NodeSet:
         nodes: List[NodeRef] = []
         for i, (nid, node) in enumerate(matches):
             p = _legacy.NodeProxy(node, nid, api._api)
-            object.__setattr__(p, "_autoflow_addr", nid)
+            object.__setattr__(p, "_AUTOGRAPH_addr", nid)
             dot = f"{group_name}[{i}]"
             nodes.append(NodeRef(p, kind="api", addr=nid, group=group_name, index=i, dotpath=dot, dictpath=[nid]))
         return NodeSet(nodes, kind="api", set_path=group_name, set_dictpath=[group_name])
@@ -3180,7 +3534,7 @@ class FlowTreeNodesView:
         refs: List[NodeRef] = []
         for i, (idx, n) in enumerate(matches):
             p = _legacy.FlowNodeProxy(n, idx, flow)
-            object.__setattr__(p, "_autoflow_addr", str(n.get("id", idx)))
+            object.__setattr__(p, "_AUTOGRAPH_addr", str(n.get("id", idx)))
             ref = NodeRef(
                 p,
                 kind="flow",
@@ -3211,7 +3565,7 @@ class FlowTreeNodesView:
                     except Exception:
                         idx = 0
                 proxy = _legacy.FlowNodeProxy(node, idx, flow)
-                object.__setattr__(proxy, "_autoflow_addr", pth)
+                object.__setattr__(proxy, "_AUTOGRAPH_addr", pth)
                 return NodeRef(proxy, kind="flow", addr=pth, group=None, index=None, dotpath=f'nodes.by_path("{pth}")', dictpath=["nodes_by_path", pth])
         raise KeyError(addr)
 
@@ -3227,14 +3581,14 @@ class FlowTreeNodesView:
             if isinstance(nodes, list) and 0 <= key < len(nodes) and isinstance(nodes[key], dict):
                 n = nodes[key]
                 proxy = _legacy.FlowNodeProxy(n, key, flow)
-                object.__setattr__(proxy, "_autoflow_addr", str(n.get("id", key)))
+                object.__setattr__(proxy, "_AUTOGRAPH_addr", str(n.get("id", key)))
                 return NodeRef(proxy, kind="flow", addr=str(n.get("id", key)), group=None, index=None, dotpath=f"nodes[{key}]", dictpath=["nodes", key])
             # treat as node id lookup (top-level only)
             if isinstance(nodes, list):
                 for idx, n in enumerate(nodes):
                     if isinstance(n, dict) and n.get("id") == key:
                         proxy = _legacy.FlowNodeProxy(n, idx, flow)
-                        object.__setattr__(proxy, "_autoflow_addr", str(key))
+                        object.__setattr__(proxy, "_AUTOGRAPH_addr", str(key))
                         return NodeRef(proxy, kind="flow", addr=str(key), group=None, index=None, dotpath=f"nodes[{key}]", dictpath=["nodes", idx])
             raise KeyError(key)
         if isinstance(key, str):

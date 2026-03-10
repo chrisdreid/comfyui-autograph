@@ -32,8 +32,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Flow, ApiFlow, convert_with_errors
-    from autoflow.api import convert_workflow, _sanitize_api_prompt
+    from autograph import Flow, ApiFlow, convert_with_errors
+    from autograph.api import convert_workflow, _sanitize_api_prompt
 
     wf_path = str(_BUNDLED_WORKFLOW)
     with open(wf_path, "r", encoding="utf-8") as fh:
@@ -147,7 +147,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
         raw = getattr(api, "unwrap", lambda: api)()
         for nid, node in (raw.items() if hasattr(raw, 'items') else api.items()):
             if isinstance(node, dict) and node.get("class_type") == "KSampler":
-                node["_meta"] = {"autoflow_test": True}
+                node["_meta"] = {"AUTOGRAPH_test": True}
                 break
         j = api.to_json()
         parsed = json.loads(j)

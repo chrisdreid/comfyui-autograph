@@ -25,7 +25,7 @@ from harness import (  # noqa: E402
 
 STAGE = "Phase 6: Server"
 
-_FIXTURES_DIR = _REPO_ROOT / "autoflow-test-suite" / "fixtures"
+_FIXTURES_DIR = _REPO_ROOT / "autograph-test-suite" / "fixtures"
 
 
 def run(collector: ResultCollector, **kwargs) -> None:
@@ -44,7 +44,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # 6.1–6.4  WebSocket event parsing  (was stage 24)
     # ===================================================================
 
-    from autoflow.ws import parse_comfy_event
+    from autograph.ws import parse_comfy_event
 
     def t_6_1():
         raw = '{"type":"progress","data":{"value":3,"max":10,"node":null}}'
@@ -119,7 +119,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
         _run_test(collector, stage, "6.5", "Server connectivity", t_6_5)
 
         def t_6_6():
-            from autoflow import NodeInfo
+            from autograph import NodeInfo
             ni = NodeInfo.fetch(server_url=server_url)
             assert ni is not None, "NodeInfo.fetch returned None"
             count = len(ni)
@@ -128,7 +128,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
         _run_test(collector, stage, "6.6", "NodeInfo.fetch(server_url) live", t_6_6)
 
         def t_6_7():
-            from autoflow import ApiFlow
+            from autograph import ApiFlow
             api = ApiFlow(str(_BUNDLED_WORKFLOW), server_url=server_url)
             assert api is not None, "Live conversion failed"
             return {"input": f"Workflow(wf, server_url=...)", "output": type(api).__name__, "result": "✓ live convert"}
@@ -149,7 +149,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     fixtures: List[FixtureCase] = discover_fixtures(fx_dir_str) if fx_dir_str else []
 
     if server_url and fixtures:
-        from autoflow import ApiFlow
+        from autograph import ApiFlow
 
         for idx, fx in enumerate(fixtures):
             prefix = f"6.{8 + idx}"
@@ -259,7 +259,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     elif server_url and not fixtures:
         # Fallback: submit the bundled workflow when no fixtures are available
         def t_6_fallback():
-            from autoflow import ApiFlow
+            from autograph import ApiFlow
             api_wf = ApiFlow(str(_BUNDLED_WORKFLOW), server_url=server_url)
 
             img_out = None

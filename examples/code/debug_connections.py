@@ -1,17 +1,17 @@
 """Reproduce user's exact scenario and inspect output."""
 import json, sys, os
 sys.path.insert(0, ".")
-from autoflow import Flow, NodeInfo
+from autograph import Flow, NodeInfo
 
 # Use env vars for node_info source
-ni_src = os.environ.get("AUTOFLOW_NODE_INFO_SOURCE")
-url = os.environ.get("AUTOFLOW_COMFYUI_SERVER_URL")
+ni_src = os.environ.get("AUTOGRAPH_NODE_INFO_SOURCE")
+url = os.environ.get("AUTOGRAPH_COMFYUI_SERVER_URL")
 if ni_src:
     ni = NodeInfo(ni_src)
 elif url:
     ni = NodeInfo("fetch", server_url=url)
 else:
-    print("ERROR: Set AUTOFLOW_NODE_INFO_SOURCE or AUTOFLOW_COMFYUI_SERVER_URL")
+    print("ERROR: Set AUTOGRAPH_NODE_INFO_SOURCE or AUTOGRAPH_COMFYUI_SERVER_URL")
     sys.exit(1)
 
 print(f"Loaded {len(dict(ni))} node types")

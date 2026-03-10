@@ -30,8 +30,8 @@ def run(collector: ResultCollector, **kwargs) -> None:
     print(f"  {stage}")
     print(f"{'='*60}\n")
 
-    from autoflow import Flow, ApiFlow, NodeInfo, Connection
-    from autoflow.connection import (
+    from autograph import Flow, ApiFlow, NodeInfo, Connection
+    from autograph.connection import (
         get_connection_input_names,
         get_output_slots,
         get_all_input_names,
@@ -531,7 +531,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
         from_nodes = flow.nodes.KSampler
 
         # Single node → should return NodeRef, not NodeSet
-        from autoflow.flowtree import NodeRef
+        from autograph.flowtree import NodeRef
         assert isinstance(from_nodes, NodeRef), f"Expected NodeRef, got {type(from_nodes).__name__}"
 
         # Both should have inputs/outputs
@@ -854,6 +854,130 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
         return {"input": "load → set seed → save → verify", "output": f"7 values, seed={wv[0]}", "result": "✓ no shift"}
     _run_test(collector, stage, "9.32", "Regression: setattr preserves extra widgets_values", t_9_32)
+
+    # -----------------------------------------------------------------------
+    # 9.33 — NodeTypeRef from NodeInfo
+    # -----------------------------------------------------------------------
+    def t_9_33():
+        from autograph import NodeTypeRef
+        ref = ni.KSampler
+        assert isinstance(ref, NodeTypeRef), f"Expected NodeTypeRef, got {type(ref).__name__}"
+        assert ref._class_type == "KSampler"
+        assert "input" in ref  # container protocol
+        assert callable(ref)
+        return {"input": "ni.KSampler", "output": repr(ref), "result": "✓ NodeTypeRef"}
+    _run_test(collector, stage, "9.33", "ni.KSampler returns NodeTypeRef", t_9_33)
+
+    # -----------------------------------------------------------------------
+    # 9.34 — Node via call (detached node with full widgets)
+    # -----------------------------------------------------------------------
+    def t_9_34():
+        from autograph import Node
+        bp = ni.KSampler(seed=42, steps=30)
+        assert isinstance(bp, Node), f"Expected Node, got {type(bp).__name__}"
+        assert bp.class_type == "KSampler"
+        assert bp.type == "KSampler"
+        assert bp.seed == 42
+        assert bp.steps == 30
+        assert bp.cfg is not None  # default from node_info
+        assert "seed" in dir(bp)
+        assert len(bp.inputs) > 0  # has input slots
+        assert len(bp.outputs) > 0  # has output slots
+        assert "KSampler" in repr(bp)
+        assert "seed=42" in repr(bp)
+        return {"input": "ni.KSampler(seed=42, steps=30)", "output": repr(bp)[:80], "result": "✓ detached Node"}
+    _run_test(collector, stage, "9.34", "ni.KSampler(seed=42) returns detached Node", t_9_34)
+
+    # -----------------------------------------------------------------------
+    # 9.35 — add_node(NodeTypeRef)
+    # -----------------------------------------------------------------------
+    def t_9_35():
+        flow = Flow.create(node_info=ni)
+        ks = flow.add_node(ni.KSampler)
+        assert ks is not None
+        assert ks.type == "KSampler"
+        assert len(flow._flow["nodes"]) == 1
+        return {"input": "flow.add_node(ni.KSampler)", "output": f"id={ks.addr}", "result": "✓ type ref"}
+    _run_test(collector, stage, "9.35", "flow.add_node(ni.KSampler) via NodeTypeRef", t_9_35)
+
+    # -----------------------------------------------------------------------
+    # 9.36 — add_node(NodeBlueprint) with overrides
+    # -----------------------------------------------------------------------
+    def t_9_36():
+        flow = Flow.create(node_info=ni)
+        bp = ni.KSampler(seed=42, steps=30)
+        ks = flow.add_node(bp)
+        nd = flow._flow["nodes"][0]
+        wv = nd.get("widgets_values", [])
+        assert 42 in wv, f"seed=42 not in {wv}"
+        assert 30 in wv, f"steps=30 not in {wv}"
+
+        # Call-site overrides should win over Node values
+        flow2 = Flow.create(node_info=ni)
+        ks2 = flow2.add_node(bp, seed=99)
+        wv2 = flow2._flow["nodes"][0].get("widgets_values", [])
+        assert 99 in wv2, f"seed=99 (override) not in {wv2}"
+
+        # Node mutability: change value then add
+        bp.seed = 77
+        assert bp.seed == 77
+        flow3 = Flow.create(node_info=ni)
+        ks3 = flow3.add_node(bp)
+        wv3 = flow3._flow["nodes"][0].get("widgets_values", [])
+        assert 77 in wv3, f"seed=77 (mutated) not in {wv3}"
+        return {"input": "add_node(node, seed=99) + mutability", "output": "overrides + mutate OK", "result": "✓ Node + override"}
+    _run_test(collector, stage, "9.36", "add_node(NodeBlueprint) applies + overrides", t_9_36)
+
+    # -----------------------------------------------------------------------
+    # 9.37 — add_node(NodeRef) copies node
+    # -----------------------------------------------------------------------
+    def t_9_37():
+        flow = Flow.create(node_info=ni)
+        ks1 = flow.add_node("KSampler", seed=42)
+        ks2 = flow.add_node(ks1)
+        assert len(flow._flow["nodes"]) == 2
+        n1, n2 = flow._flow["nodes"]
+        assert n1["id"] != n2["id"], "Copied node should have different ID"
+        assert n2["type"] == "KSampler"
+        # Links should be cleared on copy
+        for inp in n2.get("inputs", []):
+            assert inp["link"] is None, f"Copied input {inp['name']} has stale link"
+        for outp in n2.get("outputs", []):
+            assert outp["links"] == [], f"Copied output {outp['name']} has stale links"
+        return {"input": "add_node(existing_ks)", "output": f"id1={n1['id']}, id2={n2['id']}", "result": "✓ copy"}
+    _run_test(collector, stage, "9.37", "add_node(NodeRef) copies node with fresh ID", t_9_37)
+
+    # -----------------------------------------------------------------------
+    # 9.38 — add_nodes batch
+    # -----------------------------------------------------------------------
+    def t_9_38():
+        flow = Flow.create(node_info=ni)
+        refs = flow.add_nodes([
+            "KSampler",
+            ni.CheckpointLoaderSimple,
+            ni.CLIPTextEncode(text="hello"),
+        ])
+        assert len(refs) == 3, f"Expected 3 NodeRefs, got {len(refs)}"
+        assert len(flow._flow["nodes"]) == 3
+        types = [n["type"] for n in flow._flow["nodes"]]
+        assert "KSampler" in types
+        assert "CheckpointLoaderSimple" in types
+        assert "CLIPTextEncode" in types
+        return {"input": "add_nodes([str, ref, blueprint])", "output": f"{len(refs)} nodes", "result": "✓ batch"}
+    _run_test(collector, stage, "9.38", "flow.add_nodes() batch creation", t_9_38)
+
+    # -----------------------------------------------------------------------
+    # 9.39 — ID uniqueness after copies
+    # -----------------------------------------------------------------------
+    def t_9_39():
+        flow = Flow.create(node_info=ni)
+        bp = ni.KSampler(seed=0)
+        nodes = [flow.add_node(bp) for _ in range(5)]
+        ids = [int(n.addr) for n in nodes]
+        assert len(set(ids)) == 5, f"IDs not unique: {ids}"
+        assert ids == sorted(ids), f"IDs not monotonic: {ids}"
+        return {"input": "add same blueprint 5x", "output": f"ids={ids}", "result": "✓ unique IDs"}
+    _run_test(collector, stage, "9.39", "ID uniqueness after repeated blueprint adds", t_9_39)
 
     _print_stage_summary(collector, stage)
 

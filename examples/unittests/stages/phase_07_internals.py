@@ -36,7 +36,7 @@ def _env_with_repo_root(extra: dict) -> dict:
 
 
 def _run_code(code: str, extra: dict | None = None) -> str:
-    env = _env_with_repo_root({"AUTOFLOW_MODEL_LAYER": "flowtree", **(extra or {})})
+    env = _env_with_repo_root({"AUTOGRAPH_MODEL_LAYER": "flowtree", **(extra or {})})
     out = subprocess.check_output([sys.executable, "-c", code], env=env, stderr=subprocess.DEVNULL)
     return out.decode("utf-8", errors="replace").strip()
 
@@ -55,7 +55,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # ===================================================================
 
     def t_7_1():
-        from autoflow import force_recompute, ApiFlow
+        from autograph import force_recompute, ApiFlow
         api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         result = force_recompute(api)
         assert result is not None
@@ -63,7 +63,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "7.1", "force_recompute utility", t_7_1)
 
     def t_7_2():
-        from autoflow import NodeInfo
+        from autograph import NodeInfo
         ni = NodeInfo(BUILTIN_NODE_INFO)
         f = ni.find("KSampler")
         assert f is not None
@@ -71,7 +71,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "7.2", "NodeInfo.find() utility", t_7_2)
 
     def t_7_3():
-        from autoflow import NodeInfo
+        from autograph import NodeInfo
         ni = NodeInfo(BUILTIN_NODE_INFO)
         j = ni.to_json()
         assert isinstance(j, str) and len(j) > 0
@@ -83,7 +83,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     # ===================================================================
 
     def t_7_4():
-        from autoflow import ApiFlow
+        from autograph import ApiFlow
         api = ApiFlow(wf_path, node_info=BUILTIN_NODE_INFO)
         assert isinstance(api, ApiFlow)
         assert len(api) > 0
@@ -93,7 +93,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "7.4", "Legacy Workflow() → ApiFlow chain", t_7_4)
 
     def t_7_5():
-        from autoflow import Flow
+        from autograph import Flow
         f = Flow(wf_path, node_info=BUILTIN_NODE_INFO)
         ks = f.nodes.KSampler
         assert ks is not None
@@ -102,7 +102,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
     _run_test(collector, stage, "7.5", "Legacy Flow.nodes navigation", t_7_5)
 
     def t_7_6():
-        from autoflow import Flow
+        from autograph import Flow
         f = Flow(wf_path)
         f.fetch_node_info(BUILTIN_NODE_INFO)
         ks = f.nodes.KSampler
@@ -117,7 +117,7 @@ def run(collector: ResultCollector, **kwargs) -> None:
 
     def t_7_7():
         code = r"""
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow({
   "1": {"class_type": "KSampler", "inputs": {"cfg": 1}},
@@ -141,7 +141,7 @@ print(api["1"]["inputs"]["cfg"], api["2"]["inputs"]["cfg"])
 
     def t_7_8():
         code = r"""
-from autoflow import ApiFlow
+from autograph import ApiFlow
 api = ApiFlow({
   "18:17:3": {"class_type": "KSampler", "inputs": {"seed": 1}},
   "4": {"class_type": "KSampler", "inputs": {"seed": 2}},
@@ -164,7 +164,7 @@ print(ks.dictpaths())
 
     def t_7_9():
         code = f"""
-from autoflow import Flow
+from autograph import Flow
 f = Flow.load("{wf_path}")
 print("KSampler" in dir(f.nodes))
 """
@@ -182,7 +182,7 @@ print("KSampler" in dir(f.nodes))
 
     def t_7_10():
         code = f"""
-from autoflow import Flow
+from autograph import Flow
 f = Flow.load("{wf_path}", node_info="{ni_path}")
 hits = f.nodes.find(type="KSampler")
 print(type(hits).__name__)
@@ -206,7 +206,7 @@ print(bool(hits.paths()))
         if not server_url:
             raise SkipTest("No --server-url provided")
         code = f"""
-from autoflow import Flow
+from autograph import Flow
 
 f = Flow("{wf_path}")
 
@@ -234,7 +234,7 @@ print(isinstance(sub, dict), sub.get("prompt_id") is not None, hasattr(sub, "fet
     _run_test(collector, stage, "7.11", "Flowtree submit wrapper", t_7_11)
 
     def t_7_12():
-        from autoflow import ApiFlow
+        from autograph import ApiFlow
         api = ApiFlow({
             "1": {"class_type": "KSampler", "inputs": {"seed": 42, "steps": 20, "cfg": 8.0}},
         })

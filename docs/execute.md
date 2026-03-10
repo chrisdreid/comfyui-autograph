@@ -1,4 +1,4 @@
-## Execute (serverless ComfyUI node execution)
+﻿## Execute (serverless ComfyUI node execution)
 
 `execute()` runs ComfyUI nodes **in-process** (no ComfyUI HTTP server required).
 
@@ -12,14 +12,14 @@ You must run in an environment where ComfyUI’s Python modules are importable:
 
 - Activate the **same venv/conda env** you use to run ComfyUI (so `torch`, `comfy`, `nodes`, custom nodes import correctly).
 - Ensure **ComfyUI repo root** is on `PYTHONPATH` (or run with cwd at the repo root).
-- Ensure **autoflow** is importable (installed, or on `PYTHONPATH` for local development).
+- Ensure **autograph** is importable (installed, or on `PYTHONPATH` for local development).
 
 Example (Linux/macOS):
 
 ```bash
 cd /path/to/ComfyUI
 source venv/bin/activate  # or your conda/uv/poetry equivalent
-export PYTHONPATH="/path/to/ComfyUI:/path/to/ComfyUI-autoflow:${PYTHONPATH}"
+export PYTHONPATH="/path/to/ComfyUI:/path/to/ComfyUI-autograph:${PYTHONPATH}"
 ```
 
 Example (Windows PowerShell):
@@ -27,13 +27,13 @@ Example (Windows PowerShell):
 ```powershell
 cd C:\path\to\ComfyUI
 .\venv\Scripts\Activate.ps1
-$env:PYTHONPATH = "C:\path\to\ComfyUI;C:\path\to\ComfyUI-autoflow;" + $env:PYTHONPATH
+$env:PYTHONPATH = "C:\path\to\ComfyUI;C:\path\to\ComfyUI-autograph;" + $env:PYTHONPATH
 ```
 
 Quick environment check helper:
 
 ```python
-from autoflow import comfyui_available
+from autograph import comfyui_available
 
 comfyui_available(verify=False)  # quick path check
 comfyui_available(verify=True)   # full import check
@@ -44,7 +44,7 @@ comfyui_available(verify=True)   # full import check
 ### Execute a workflow (workspace `Flow`)
 
 ```python
-from autoflow import Flow
+from autograph import Flow
 
 flow = Flow("workflow.json", node_info="node_info.json")
 res = flow.execute()
@@ -56,7 +56,7 @@ print(res.prompt_id)
 ### Execute a workflow (API payload `ApiFlow`)
 
 ```python
-from autoflow import ApiFlow
+from autograph import ApiFlow
 
 api = ApiFlow("workflow-api.json")
 res = api.execute()
@@ -71,7 +71,7 @@ Serverless `execute()` does not fetch from `/view` (no server). Instead it resol
 paths using ComfyUI’s `folder_paths` (when available) and reads/copies directly from disk.
 
 ```python
-from autoflow import Flow
+from autograph import Flow
 
 flow = Flow("workflow.json", node_info="node_info.json")
 res = flow.execute()
@@ -83,7 +83,7 @@ print(paths)
 
 Notes:
 - Only **registered outputs** (history-style refs) can be saved.
-- For common nodes like `SaveImage`, autoflow can also infer outputs as a fallback by scanning the output dir.
+- For common nodes like `SaveImage`, autograph can also infer outputs as a fallback by scanning the output dir.
 
 ---
 
@@ -92,7 +92,7 @@ Notes:
 `execute()` can stream best-effort events into a callback:
 
 ```python
-from autoflow import Flow, ProgressPrinter
+from autograph import Flow, ProgressPrinter
 
 flow = Flow("workflow.json", node_info="node_info.json")
 flow.execute(on_event=ProgressPrinter())
@@ -121,7 +121,7 @@ ComfyUI “server mode” normally looks like:
 
 `execute()` intentionally skips **all** of that HTTP/websocket surface.
 
-Instead, autoflow executes the same workflow graph directly in Python by importing ComfyUI modules locally and calling node classes.
+Instead, autograph executes the same workflow graph directly in Python by importing ComfyUI modules locally and calling node classes.
 
 #### Core idea: run nodes directly (node runner)
 
@@ -131,7 +131,7 @@ When you call:
 res = flow.execute()
 ```
 
-autoflow:
+autograph:
 
 - Imports ComfyUI locally (`comfy.*`, `nodes.NODE_CLASS_MAPPINGS`)
 - Builds a dependency DAG from your `ApiFlow` prompt dict (node input refs like `["4", 0]`)
@@ -151,13 +151,13 @@ Many custom nodes were written assuming ComfyUI is running with its server layer
 - runtime state like `.last_node_id` (used by preview/progress helpers)
 
 In serverless mode we are **not** starting the server, but we still want those nodes to import.
-autoflow creates a minimal stub and assigns it to `server.PromptServer.instance` so import-time code doesn’t crash.
+autograph creates a minimal stub and assigns it to `server.PromptServer.instance` so import-time code doesn’t crash.
 
 This stub does not implement real HTTP or websockets — it only exists to keep “server-assuming” custom nodes from failing at import/runtime.
 
 #### How outputs are returned (history parity without `/history`)
 
-In node-runner mode there is no `/history`, so autoflow synthesizes a similar structure:
+In node-runner mode there is no `/history`, so autograph synthesizes a similar structure:
 
 - Prefer node “UI” returns when available (some output nodes return `{"ui": {...}}` describing images/files)
 - Fallback: for common cases like `SaveImage`, scan ComfyUI’s output directory for newly created files and convert those into history-style refs.
