@@ -156,6 +156,27 @@ def validate_workflow_data(workflow_data: Dict[str, Any]) -> None:
 # Workspace subgraphs
 # ---------------------------------------------------------------------------
 
+# Private marker stamped onto flattened input entries whose value came from a
+# subgraph instance's promoted widget (consumed during API conversion).
+_PROMOTED_VALUE_KEY = "_autograph_promoted_value"
+
+
+def _value_fits_input_type(value: Any, type_str: Any) -> bool:
+    """Loose fit check of a promoted widget value against a subgraph input's
+    declared type (used only when widgets_values counts don't line up)."""
+    if not isinstance(type_str, str):
+        return True
+    t = type_str.upper()
+    if t == "INT":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if t == "FLOAT":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if t == "BOOLEAN":
+        return isinstance(value, bool) or value in (0, 1)
+    if t == "STRING" or t == "COMBO":
+        return isinstance(value, str)
+    return True
+
 
 def _get_subgraph_defs(workflow_data: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     defs = workflow_data.get("definitions")
@@ -193,10 +214,13 @@ def _flatten_subgraphs_once(workflow_data: Dict[str, Any]) -> Tuple[Dict[str, An
     nodes2: List[Dict[str, Any]] = [n for n in (wf.get("nodes") or []) if isinstance(n, dict)]
     links2: List[List[Any]] = [l for l in (wf.get("links") or []) if isinstance(l, list) and len(l) >= 6]
 
-    orig_link_by_id: Dict[int, List[Any]] = {}
+    # Live link lookup: must include links created while flattening earlier
+    # instances in this pass, so chained subgraphs (instance output feeding
+    # another instance's input) resolve.
+    link_by_id: Dict[int, List[Any]] = {}
     for l in links2:
         try:
-            orig_link_by_id[int(l[0])] = l
+            link_by_id[int(l[0])] = l
         except Exception:
             continue
 
@@ -245,6 +269,7 @@ def _flatten_subgraphs_once(workflow_data: Dict[str, Any]) -> Tuple[Dict[str, An
         links2 = [l for l in links2 if int(l[0]) not in ext_in_link_ids and int(l[0]) not in ext_out_link_ids]
 
         inst_inputs_by_name: Dict[str, Optional[int]] = {}
+        inst_input_entry_by_name: Dict[str, Dict[str, Any]] = {}
         for inp in (inst.get("inputs") or []):
             if not isinstance(inp, dict):
                 continue
@@ -252,6 +277,7 @@ def _flatten_subgraphs_once(workflow_data: Dict[str, Any]) -> Tuple[Dict[str, An
             link_id = inp.get("link")
             if isinstance(name, str):
                 inst_inputs_by_name[name] = int(link_id) if isinstance(link_id, int) else None
+                inst_input_entry_by_name[name] = inp
 
         slot_origin: Dict[int, Optional[Tuple[int, int, Any]]] = {}
         for idx, sg_in in enumerate(sg_inputs):
@@ -264,11 +290,66 @@ def _flatten_subgraphs_once(workflow_data: Dict[str, Any]) -> Tuple[Dict[str, An
             if not isinstance(ext_lid, int):
                 slot_origin[idx] = None
                 continue
-            ext_link = orig_link_by_id.get(ext_lid)
+            ext_link = link_by_id.get(ext_lid)
             if not ext_link or len(ext_link) < 6:
                 slot_origin[idx] = None
                 continue
             slot_origin[idx] = (int(ext_link[1]), int(ext_link[2]), ext_link[5])
+
+        # Promoted widget values: the instance node's widgets_values carries one
+        # entry per widget-promoted subgraph input, in subgraph-input order (a
+        # subgraph input is widget-promoted when any inner input it feeds is a
+        # widget-converted input). For promoted inputs without an external link,
+        # the instance value must be carried onto the inner input it promotes —
+        # the inner node's own widgets_values is stale in that case.
+        inner_node_by_id: Dict[int, Dict[str, Any]] = {
+            n["id"]: n for n in sg_nodes if isinstance(n, dict) and isinstance(n.get("id"), int)
+        }
+        targets_by_slot: Dict[int, List[Tuple[int, int]]] = {}
+        for lk in sg_links:
+            if not isinstance(lk, dict) or lk.get("origin_id") != -10:
+                continue
+            s, tid, tslot = lk.get("origin_slot"), lk.get("target_id"), lk.get("target_slot")
+            if isinstance(s, int) and isinstance(tid, int) and isinstance(tslot, int):
+                targets_by_slot.setdefault(s, []).append((tid, tslot))
+
+        def _promotes_widget(slot: int) -> bool:
+            for tid, tslot in targets_by_slot.get(slot, []):
+                inner = inner_node_by_id.get(tid)
+                ins = inner.get("inputs") if isinstance(inner, dict) else None
+                if isinstance(ins, list) and 0 <= tslot < len(ins) and isinstance(ins[tslot], dict) and ins[tslot].get("widget"):
+                    return True
+            return False
+
+        inst_wv = inst.get("widgets_values")
+        # Widgets never hold null — some frontend versions pad instance
+        # widgets_values with null placeholder slots, so drop them.
+        inst_wv_list = [v for v in inst_wv if v is not None] if isinstance(inst_wv, list) else []
+        promoted_slots = [idx for idx, sg_in in enumerate(sg_inputs) if isinstance(sg_in, dict) and _promotes_widget(idx)]
+        # One value per widget-promoted input, in subgraph-input order. When
+        # the counts don't line up (unknown serialization variant), assign
+        # positionally only while each value fits the input's declared type,
+        # so a mismatch degrades to the inner nodes' own values.
+        exact = len(inst_wv_list) == len(promoted_slots)
+        promoted_value_by_slot: Dict[int, Any] = {}
+        wv_idx = 0
+        for idx in promoted_slots:
+            if wv_idx >= len(inst_wv_list):
+                break
+            val = inst_wv_list[wv_idx]
+            if not exact and not _value_fits_input_type(val, sg_inputs[idx].get("type")):
+                break
+            promoted_value_by_slot[idx] = val
+            wv_idx += 1
+        for idx in promoted_slots:
+            # A value stamped onto the instance input by an outer flatten pass
+            # (nested subgraphs) wins over the instance's own widgets_values.
+            nm = sg_inputs[idx].get("name")
+            entry = inst_input_entry_by_name.get(nm) if isinstance(nm, str) else None
+            if isinstance(entry, dict) and _PROMOTED_VALUE_KEY in entry:
+                promoted_value_by_slot[idx] = entry[_PROMOTED_VALUE_KEY]
+
+        promoted_literal_by_link: Dict[int, Any] = {}
 
         node_id_map: Dict[int, int] = {}
         for n in sg_nodes:
@@ -304,6 +385,8 @@ def _flatten_subgraphs_once(workflow_data: Dict[str, Any]) -> Tuple[Dict[str, An
                 ext = slot_origin.get(origin_slot)
                 if ext is None:
                     link_id_map[old_lid] = None
+                    if origin_slot in promoted_value_by_slot:
+                        promoted_literal_by_link[old_lid] = promoted_value_by_slot[origin_slot]
                     continue
                 new_target = node_id_map.get(target_id)
                 if new_target is None:
@@ -311,7 +394,9 @@ def _flatten_subgraphs_once(workflow_data: Dict[str, Any]) -> Tuple[Dict[str, An
                     continue
                 new_lid = _alloc_link_id()
                 link_id_map[old_lid] = new_lid
-                links2.append([new_lid, ext[0], ext[1], new_target, target_slot, ltype])
+                new_link = [new_lid, ext[0], ext[1], new_target, target_slot, ltype]
+                links2.append(new_link)
+                link_by_id[new_lid] = new_link
                 continue
 
             if target_id == -20:
@@ -322,7 +407,9 @@ def _flatten_subgraphs_once(workflow_data: Dict[str, Any]) -> Tuple[Dict[str, An
                     old_ext_id = int(ext_link[0])
                     new_lid = _alloc_link_id()
                     ext_link_rewire[old_ext_id] = new_lid
-                    links2.append([new_lid, new_origin, origin_slot, int(ext_link[3]), int(ext_link[4]), ext_link[5]])
+                    new_link = [new_lid, new_origin, origin_slot, int(ext_link[3]), int(ext_link[4]), ext_link[5]]
+                    links2.append(new_link)
+                    link_by_id[new_lid] = new_link
                 continue
 
             new_origin = node_id_map.get(origin_id)
@@ -332,7 +419,9 @@ def _flatten_subgraphs_once(workflow_data: Dict[str, Any]) -> Tuple[Dict[str, An
                 continue
             new_lid = _alloc_link_id()
             link_id_map[old_lid] = new_lid
-            links2.append([new_lid, new_origin, origin_slot, new_target, target_slot, ltype])
+            new_link = [new_lid, new_origin, origin_slot, new_target, target_slot, ltype]
+            links2.append(new_link)
+            link_by_id[new_lid] = new_link
 
         for n in sg_nodes:
             if not isinstance(n, dict):
@@ -350,6 +439,8 @@ def _flatten_subgraphs_once(workflow_data: Dict[str, Any]) -> Tuple[Dict[str, An
                 if isinstance(lid, int):
                     mapped = link_id_map.get(lid)
                     inp["link"] = mapped if isinstance(mapped, int) else None
+                    if not isinstance(mapped, int) and lid in promoted_literal_by_link:
+                        inp[_PROMOTED_VALUE_KEY] = promoted_literal_by_link[lid]
 
             for outp in (new_n.get("outputs") or []):
                 if not isinstance(outp, dict):
@@ -1122,6 +1213,45 @@ def normalize_node_info(
 # ---------------------------------------------------------------------------
 
 
+# Type names that render as widgets in the frontend (everything else with a
+# plain string type is a connection slot).
+_WIDGET_TYPE_NAMES = {"INT", "FLOAT", "BOOLEAN", "STRING", "COMBO", "COMFY_DYNAMICCOMBO_V3"}
+
+# Option-dict keys that only widget specs carry (legacy/custom widget types
+# like "INT:seed" or "EASY_COMBO" declare widget config instead of a
+# recognizable type name).
+_WIDGET_OPTION_KEYS = {
+    "min", "max", "step", "round", "multiline", "placeholder",
+    "dynamicPrompts", "control_after_generate", "options",
+    "image_upload", "video_upload", "audio_upload", "file_upload", "text_upload",
+}
+
+
+def _is_dynamic_combo_spec(spec: Any) -> bool:
+    return isinstance(spec, list) and bool(spec) and spec[0] == "COMFY_DYNAMICCOMBO_V3"
+
+
+def _dyncombo_options(spec: Any) -> List[Dict[str, Any]]:
+    if not _is_dynamic_combo_spec(spec) or len(spec) < 2 or not isinstance(spec[1], dict):
+        return []
+    options = spec[1].get("options")
+    if not isinstance(options, list):
+        return []
+    return [o for o in options if isinstance(o, dict)]
+
+
+def _dyncombo_option_input_specs(option: Dict[str, Any]) -> List[Tuple[str, Any]]:
+    """Sub-widget (name, spec) pairs contributed by a selected dynamic-combo option."""
+    out: List[Tuple[str, Any]] = []
+    inputs_def = option.get("inputs")
+    if isinstance(inputs_def, dict):
+        for sec in ("required", "optional"):
+            sec_inputs = inputs_def.get(sec)
+            if isinstance(sec_inputs, dict):
+                out.extend(sec_inputs.items())
+    return out
+
+
 def get_widget_input_names(class_type: str, node_info: Optional[Dict[str, Any]] = None, use_api: bool = False) -> List[str]:
     if use_api:
         if node_info is None:
@@ -1139,28 +1269,39 @@ def get_widget_input_names(class_type: str, node_info: Optional[Dict[str, Any]] 
             if not isinstance(section_inputs, dict):
                 continue
             for name, spec in section_inputs.items():
-                if not isinstance(spec, list):
+                if not isinstance(spec, list) or not spec:
                     continue
-                l = len(spec)
-                if l == 0:
-                    continue
+                head = spec[0]
+                opts = spec[1] if len(spec) >= 2 and isinstance(spec[1], dict) else {}
                 # forceInput: true → connection slot, not widget
-                if l >= 2 and isinstance(spec[1], dict) and spec[1].get("forceInput"):
+                if opts.get("forceInput"):
                     continue
-                # Single string type → connection-only (unless COMBO)
-                if l == 1 and isinstance(spec[0], str):
-                    if spec[0] == "COMBO":
-                        widget_names.append(name)  # COMBO with no options is still a widget
+                # Explicit option list (classic COMBO) → widget
+                if isinstance(head, (list, tuple)):
+                    widget_names.append(name)
                     continue
-                # String + tooltip-only dict → connection-only (unless COMBO)
-                if l == 2 and isinstance(spec[0], str) and isinstance(spec[1], dict):
-                    if spec[0] == "COMBO":
-                        widget_names.append(name)
-                        continue
-                    opts = spec[1]
-                    if not opts or (len(opts) == 1 and "tooltip" in opts):
-                        continue
-                widget_names.append(name)
+                # Explicit widget markers on the options dict: only widget
+                # specs declare "socketless" (true = no socket, false = widget
+                # with a socket — COLOR, CURVE, custom editor types, ...), and
+                # "widgetType" names the widget rendered for a multi-type
+                # input ("FLOAT,INT" rendered as FLOAT).
+                if "socketless" in opts or opts.get("widgetType"):
+                    widget_names.append(name)
+                    continue
+                # Plain string type: widget for widget-capable type names —
+                # V3 schemas emit plain widgets as e.g. ["BOOLEAN", {}].
+                if isinstance(head, str) and head.upper() in _WIDGET_TYPE_NAMES:
+                    widget_names.append(name)
+                    continue
+                # Legacy/custom widget types ("INT:seed", "EASY_COMBO", ...):
+                # no recognizable type name or marker, but the options dict
+                # carries widget config (a non-null default, min/max/step,
+                # options, upload flags, ...). Anything without such config —
+                # IMAGE, LATENT, COMFY_MATCHTYPE_V3, COMFY_AUTOGROW_V3,
+                # unmarked multi-types like "BOUNDING_BOX,STRING" — is a
+                # connection slot.
+                if opts.get("default") is not None or any(k in opts for k in _WIDGET_OPTION_KEYS):
+                    widget_names.append(name)
         return widget_names
 
     try:
@@ -1209,6 +1350,20 @@ def get_widget_input_names(class_type: str, node_info: Optional[Dict[str, Any]] 
     return widget_names
 
 
+def _find_spec_dotted(specs: Dict[str, Any], name: str) -> Any:
+    """Look up *name* in a flat {input_name: spec} dict, resolving dotted
+    dynamic-combo sub-widget names ("resize_type.multiplier") recursively."""
+    if name in specs:
+        return specs[name]
+    if "." in name:
+        parent, _, sub = name.partition(".")
+        for option in _dyncombo_options(specs.get(parent)):
+            found = _find_spec_dotted(dict(_dyncombo_option_input_specs(option)), sub)
+            if found is not None:
+                return found
+    return None
+
+
 def _widget_spec_for_name(class_type: str, name: str, node_info: Optional[Dict[str, Any]]) -> Any:
     if not isinstance(node_info, dict):
         return None
@@ -1218,16 +1373,23 @@ def _widget_spec_for_name(class_type: str, name: str, node_info: Optional[Dict[s
     inputs_def = node_info.get("input")
     if not isinstance(inputs_def, dict):
         return None
+    merged: Dict[str, Any] = {}
     for sec in ("required", "optional"):
         sec_inputs = inputs_def.get(sec)
-        if isinstance(sec_inputs, dict) and name in sec_inputs:
-            return sec_inputs.get(name)
-    return None
+        if isinstance(sec_inputs, dict):
+            for k, v in sec_inputs.items():
+                merged.setdefault(k, v)
+    return _find_spec_dotted(merged, name)
 
 
 def _spec_default(spec: Any) -> Any:
     if isinstance(spec, list) and len(spec) >= 2 and isinstance(spec[1], dict):
-        return spec[1].get("default")
+        default = spec[1].get("default")
+        if default is None and _is_dynamic_combo_spec(spec):
+            options = _dyncombo_options(spec)
+            if options:
+                return options[0].get("key")
+        return default
     return None
 
 
@@ -1264,16 +1426,37 @@ def _fits_widget_spec(value: Any, spec: Any) -> bool:
         except Exception:
             return False
     if isinstance(head, str):
-        t = head.upper()
-        if t == "INT":
-            return _is_int_like(value)
-        if t == "FLOAT":
-            return _is_number_like(value)
-        if t == "BOOLEAN":
-            return isinstance(value, bool) or value in (0, 1)
-        if t == "STRING":
-            return isinstance(value, str)
-        return True
+        if head == "COMFY_DYNAMICCOMBO_V3":
+            # Value must be one of the option keys (the frontend stores the
+            # key string, never an index).
+            keys = [o.get("key") for o in _dyncombo_options(spec)]
+            return value in keys if keys else True
+
+        def _fits_type_name(t: str) -> bool:
+            if t == "INT":
+                return _is_int_like(value)
+            if t == "FLOAT":
+                return _is_number_like(value)
+            if t == "BOOLEAN":
+                return isinstance(value, bool) or value in (0, 1)
+            if t == "STRING":
+                return isinstance(value, str)
+            if t == "COMBO":
+                options = opts.get("options") if isinstance(opts, dict) else None
+                if isinstance(options, list) and options and not opts.get("multiselect"):
+                    try:
+                        return value in options
+                    except Exception:
+                        return False
+                return True
+            return True
+
+        # widgetType names the widget actually rendered for multi-type inputs
+        # (e.g. "FLOAT,INT" rendered as FLOAT).
+        widget_type = opts.get("widgetType") if isinstance(opts, dict) else None
+        t = widget_type if isinstance(widget_type, str) else head
+        parts = [part.strip().upper() for part in t.split(",") if part.strip()]
+        return any(_fits_type_name(part) for part in parts) if parts else True
     return True
 
 
@@ -1359,6 +1542,36 @@ def align_widgets_values(
         if aligned[k] is None:
             aligned[k] = defaults[k]
     return aligned
+
+
+def _align_widgets_with_dynamic_combos(
+    class_type: str,
+    widgets_values: List[Any],
+    widget_names: List[str],
+    node_info: Optional[Dict[str, Any]],
+    max_rounds: int = 4,
+) -> Tuple[List[str], List[Any]]:
+    """Align widgets_values to widget names, expanding COMFY_DYNAMICCOMBO_V3
+    widgets: the selected option contributes sub-widget inputs named
+    "<combo>.<sub>" whose values follow the combo's key in widgets_values."""
+    names = list(widget_names)
+    aligned = align_widgets_values(class_type, widgets_values, names, node_info=node_info)
+    for _ in range(max_rounds):
+        expanded: List[str] = []
+        for name, val in zip(names, aligned):
+            expanded.append(name)
+            spec = _widget_spec_for_name(class_type, name, node_info)
+            for option in _dyncombo_options(spec):
+                if option.get("key") == val:
+                    for sub_name, _sub_spec in _dyncombo_option_input_specs(option):
+                        expanded.append(f"{name}.{sub_name}")
+                    break
+        expanded = list(dict.fromkeys(expanded))
+        if expanded == names:
+            break
+        names = expanded
+        aligned = align_widgets_values(class_type, widgets_values, names, node_info=node_info)
+    return names, aligned
 
 
 # ---------------------------------------------------------------------------
@@ -1503,7 +1716,9 @@ def workflow_to_api_format_with_errors(
             widget_names = get_widget_input_names(str(class_type), node_info, use_api)
             widgets_values = node.get("widgets_values", []) or []
             if use_api:
-                widgets_values = align_widgets_values(str(class_type), list(widgets_values), widget_names, node_info=node_info)
+                widget_names, widgets_values = _align_widgets_with_dynamic_combos(
+                    str(class_type), list(widgets_values), widget_names, node_info
+                )
 
             for i in range(min(len(widget_names), len(widgets_values))):
                 inputs[widget_names[i]] = widgets_values[i]
@@ -1517,6 +1732,10 @@ def workflow_to_api_format_with_errors(
                 if not isinstance(name, str) or not name:
                     continue
                 if link_id is None:
+                    # Literal carried down from a subgraph instance's promoted
+                    # widget (stamped by _flatten_subgraphs_once).
+                    if _PROMOTED_VALUE_KEY in inp:
+                        inputs[name] = inp[_PROMOTED_VALUE_KEY]
                     continue
                 try:
                     inputs[name] = _resolve_link_value(int(link_id), str(in_type))
