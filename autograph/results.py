@@ -23,6 +23,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
+import warnings as _warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
@@ -114,6 +115,28 @@ def _submit_impl(
 
     resp = _net.http_json(_net.comfy_url(base, "/prompt"), payload=payload, timeout=timeout, method="POST")
     time_submitted = time.time()
+
+    # ComfyUI returns per-node validation failures as `node_errors` inside an
+    # HTTP 200, silently drops each failing node's dependent output nodes, runs
+    # the remaining outputs, and still finishes the prompt with
+    # status "success". Surface that loudly so partial renders don't
+    # masquerade as clean runs.
+    node_errors = resp.get("node_errors")
+    if isinstance(node_errors, dict) and node_errors:
+        parts: List[str] = []
+        dropped: List[str] = []
+        for nid, info in node_errors.items():
+            ct = info.get("class_type") if isinstance(info, dict) else None
+            parts.append(f"{nid} ({ct})" if ct else str(nid))
+            if isinstance(info, dict) and isinstance(info.get("dependent_outputs"), list):
+                dropped.extend(str(d) for d in info["dependent_outputs"])
+        msg = (
+            f"ComfyUI reported node_errors for node(s): {', '.join(parts)}"
+            + (f"; dependent output node(s) {sorted(set(dropped))} will NOT execute" if dropped else "")
+            + ". The rest of the prompt was still queued — inspect result.node_errors for details."
+        )
+        logger.warning(msg)
+        _warnings.warn(msg, RuntimeWarning, stacklevel=3)
 
     if fetch_outputs and not wait:
         raise ValueError("fetch_outputs=True requires wait=True (history is needed to locate output images).")
@@ -492,6 +515,18 @@ class SubmissionResult(dict):
         if isinstance(self.get("prompt_id"), str):
             return self.get("prompt_id")
         return None
+
+    @property
+    def node_errors(self) -> Dict[str, Any]:
+        """Per-node validation failures from the `/prompt` response (empty dict
+        when none). Non-empty means ComfyUI skipped those nodes' dependent
+        outputs even though the prompt reports success."""
+        for obj in (self.get("submit"), self):
+            if isinstance(obj, dict):
+                ne = obj.get("node_errors")
+                if isinstance(ne, dict):
+                    return ne
+        return {}
 
     def fetch_files(
         self,

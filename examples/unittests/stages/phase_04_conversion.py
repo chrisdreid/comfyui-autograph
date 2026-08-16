@@ -516,4 +516,144 @@ def run(collector: ResultCollector, **kwargs) -> None:
         return {"input": "upload_file(src.jpeg) + ApiFlow/Flow helpers", "output": "src.jpeg", "result": "✓ upload helpers patch LoadImage"}
     _run_test(collector, stage, "4.34", "upload_file helpers upload and patch LoadImage", t_4_34)
 
+    # ===================================================================
+    # 4.35–4.37  Subgraph promoted widgets + V3 schemas (regression)
+    # ===================================================================
+
+    _SG_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    _SG_NODE_INFO = {
+        "TestSwitch": {"input": {"required": {"switch": ["BOOLEAN", {}]}}},
+        "TestSlice": {"input": {"required": {"duration": ["FLOAT", {"default": 0.0}]}}},
+    }
+    _SG_WORKFLOW = {
+        "last_node_id": 5,
+        "last_link_id": 20,
+        "nodes": [
+            {
+                "id": 5,
+                "type": _SG_ID,
+                "inputs": [
+                    {"name": "switch", "type": "BOOLEAN", "link": None, "widget": {"name": "switch"}},
+                ],
+                "outputs": [],
+                # Promoted values: one entry per widget-promoted subgraph input.
+                "widgets_values": [False, 60.5],
+            }
+        ],
+        "links": [],
+        "definitions": {
+            "subgraphs": [
+                {
+                    "id": _SG_ID,
+                    "name": "Test Subgraph",
+                    "inputs": [
+                        {"id": "i0", "name": "switch", "type": "BOOLEAN", "linkIds": [10]},
+                        {"id": "i1", "name": "duration", "type": "FLOAT", "linkIds": [11]},
+                    ],
+                    "outputs": [],
+                    "nodes": [
+                        {
+                            "id": 1,
+                            "type": "TestSwitch",
+                            "inputs": [{"name": "switch", "type": "BOOLEAN", "link": 10, "widget": {"name": "switch"}}],
+                            "outputs": [],
+                            # Stale inner value — the instance's False must win.
+                            "widgets_values": [True],
+                        },
+                        {
+                            "id": 2,
+                            "type": "TestSlice",
+                            "inputs": [{"name": "duration", "type": "FLOAT", "link": 11, "widget": {"name": "duration"}}],
+                            "outputs": [],
+                            "widgets_values": [0.0],
+                        },
+                    ],
+                    "links": [
+                        {"id": 10, "origin_id": -10, "origin_slot": 0, "target_id": 1, "target_slot": 0, "type": "BOOLEAN"},
+                        {"id": 11, "origin_id": -10, "origin_slot": 1, "target_id": 2, "target_slot": 0, "type": "FLOAT"},
+                    ],
+                }
+            ]
+        },
+    }
+
+    def t_4_35():
+        api = Flow.load(json.loads(json.dumps(_SG_WORKFLOW))).convert(node_info=_SG_NODE_INFO)
+        raw = getattr(api, "unwrap", lambda: dict(api))()
+        by_type = {n["class_type"]: n for n in raw.values() if isinstance(n, dict)}
+        sw = by_type["TestSwitch"]["inputs"]
+        sl = by_type["TestSlice"]["inputs"]
+        assert sw.get("switch") is False, f"promoted literal lost/stale: {sw!r}"
+        assert sl.get("duration") == 60.5, f"promoted literal lost/stale: {sl!r}"
+        return {
+            "input": "subgraph instance widgets_values [False, 60.5], inner stale [True]/[0.0]",
+            "output": f"switch={sw.get('switch')!r} duration={sl.get('duration')!r}",
+            "result": "✓ promoted widget literals carried onto inner nodes",
+        }
+    _run_test(collector, stage, "4.35", "Subgraph promoted widget literals survive flattening", t_4_35)
+
+    def t_4_36():
+        node_info = {
+            "TestResize": {
+                "input": {
+                    "required": {
+                        "resize_type": [
+                            "COMFY_DYNAMICCOMBO_V3",
+                            {
+                                "options": [
+                                    {"key": "scale dimensions", "inputs": {"required": {"width": ["INT", {"default": 512}], "height": ["INT", {"default": 512}]}}},
+                                    {"key": "scale by multiplier", "inputs": {"required": {"multiplier": ["FLOAT", {"default": 1.0}]}}},
+                                ]
+                            },
+                        ],
+                        "scale_method": ["COMBO", {"options": ["nearest", "lanczos"], "default": "lanczos"}],
+                    }
+                }
+            }
+        }
+        wf = {
+            "last_node_id": 1,
+            "last_link_id": 0,
+            "nodes": [
+                {"id": 1, "type": "TestResize", "inputs": [], "outputs": [], "widgets_values": ["scale by multiplier", 2.0, "lanczos"]}
+            ],
+            "links": [],
+        }
+        api = Flow.load(wf).convert(node_info=node_info)
+        raw = getattr(api, "unwrap", lambda: dict(api))()
+        inputs = raw["1"]["inputs"]
+        assert inputs.get("resize_type") == "scale by multiplier", f"combo key mangled: {inputs!r}"
+        assert inputs.get("resize_type.multiplier") == 2.0, f"sub-widget missing: {inputs!r}"
+        assert inputs.get("scale_method") == "lanczos", f"trailing widget shifted: {inputs!r}"
+        return {
+            "input": "widgets_values ['scale by multiplier', 2.0, 'lanczos']",
+            "output": json.dumps(inputs),
+            "result": "✓ dynamic combo key + dotted sub-widget emitted",
+        }
+    _run_test(collector, stage, "4.36", "COMFY_DYNAMICCOMBO_V3 emits option key + sub-widgets", t_4_36)
+
+    def t_4_37():
+        from autograph.convert import get_widget_input_names
+        node_info = {
+            "T": {
+                "input": {
+                    "required": {
+                        "value": ["BOOLEAN", {}],
+                        "on_false": ["COMFY_MATCHTYPE_V3", {"template": {"template_id": "x", "allowed_types": "*"}}],
+                        "img": ["IMAGE", {}],
+                        "combo": [["a", "b"]],
+                        "forced": ["INT", {"forceInput": True}],
+                    }
+                }
+            }
+        }
+        names = get_widget_input_names("T", node_info, use_api=True)
+        assert names == ["value", "combo"], f"widget classification wrong: {names!r}"
+        return {
+            "input": "BOOLEAN{}, MATCHTYPE_V3, IMAGE{}, combo list, forceInput INT",
+            "output": f"widgets: {names}",
+            "result": "✓ V3 widget/connection classification",
+        }
+    _run_test(collector, stage, "4.37", "Widget classification: bare BOOLEAN widget, V3 matchtype connection", t_4_37)
+
     _print_stage_summary(collector, stage)

@@ -5,7 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.3.0] - 2026-08-16
+
+### Fixed
+- **Subgraph promoted widget values were dropped** — flattening ignored the instance node's `widgets_values`, so literal values set on promoted widgets (e.g. a promoted `switch` boolean or `duration` float) never reached the inner nodes, which either kept their stale internal values or lost the input entirely. Instance values are now mapped onto widget-promoted subgraph inputs (in subgraph-input order) and carried onto the inner inputs they promote; externally linked promoted inputs still follow the link.
+- **V3 widget classification** — inputs declared as `["BOOLEAN", {}]` / `["INT", {}]` / etc. with an empty options dict (common in V3 node schemas, e.g. `PrimitiveBoolean.value`, `ComfySwitchNode.switch`) were misclassified as connection-only and dropped from the API prompt, producing `required_input_missing` node_errors that ComfyUI reports inside an HTTP 200 while silently skipping the dependent output nodes. Widget-vs-connection classification now follows the type name (INT/FLOAT/BOOLEAN/STRING/COMBO and dynamic combos are widgets; `COMFY_MATCHTYPE_V3` and other plain types are connections).
+- **`COMFY_DYNAMICCOMBO_V3` support** — dynamic combo widgets now convert as the selected option **key** (e.g. `"scale by multiplier"` instead of a misaligned neighboring value) and emit the selected option's sub-widget inputs as dotted names (e.g. `resize_type.multiplier`), which previously were dropped and shifted every subsequent widget value.
+- **`node_errors` surfaced on submit** — a `/prompt` response carrying non-empty `node_errors` now emits a `RuntimeWarning` + log warning listing the failing nodes and the dependent output nodes ComfyUI will skip, and `SubmissionResult.node_errors` exposes the details. Previously a prompt could half-render and still look like a clean success.
 
 ### Added
 - **MCP server (optional)** — ships an opt-in Model Context Protocol server as a new `autograph.mcp` subpackage so any MCP-capable IDE (Claude Desktop, Claude Code, Cursor, VS Code, Continue, Zed) can drive ComfyUI through natural-language tool calls. Install with `pip install "comfyui-autograph[mcp]"` and run via the new `comfyui-autograph-mcp` console script (or `python -m autograph.mcp`).
@@ -26,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MCP resources** — `comfyui://node-info`, `comfyui://history/{prompt_id}`, `comfyui://outputs/{prompt_id}/{filename}` for browsing without burning tool calls.
 - **Conversation prompt templates** — `text_to_image`, `diagnose_workflow`, and a new `vibe_build_workflow` end-to-end build template.
 - IDE drop-in JSON snippets in [`examples/mcp/`](examples/mcp/) plus a [`docs/mcp.md`](docs/mcp.md) reference. The core `comfyui-autograph` package remains zero-dependency; only the `[mcp]` extra pulls in `mcp>=1.7.1` (which itself requires Python 3.10+).
+- **`SubmissionResult.node_errors`** — new property exposing per-node validation failures from the `/prompt` response (empty dict when none), so callers can fail hard instead of trusting a half-rendered "success".
 
 ## [2.2.0] - 2026-05-06
 

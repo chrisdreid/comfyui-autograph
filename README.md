@@ -11,7 +11,7 @@ $$  __$$ |$$ |  $$ |  $$ |$$\ $$ |  $$ |$$ |  $$ |$$ |     $$  __$$ |$$ |  $$ |$
                                         $$\   $$ |                   $$ |                
                                         \$$$$$$  |                   $$ |                
                                          \______/                    \__|                
-ComfyUI                                                                      version: 2.2.0
+ComfyUI                                                                      version: 2.3.0
 ```
 
 [![PyPI version](https://img.shields.io/pypi/v/comfyui-autograph?color=blue)](https://pypi.org/project/comfyui-autograph/)
