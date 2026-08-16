@@ -19,6 +19,7 @@ keywords = [
     "workflow",
     "workflow.json",
     "workflow-api",
+    "workflow-conversion",
     "workflow-api.json",
     "stable-diffusion",
     "image-generation",
