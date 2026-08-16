@@ -69,8 +69,12 @@ Skip the GUI. `autograph` handles the backend so you can automate/pipeline your 
 - No additional Python packages required for the core library
 
 ## Tested ComfyUI Versions:
-- ComfyUI `0.8.2`
-- ComfyUI_frontend `v1.35.9`
+Works across ComfyUI `0.8.2` → `0.33.0` (ComfyUI_frontend `v1.35.9` → `v1.49`).
+
+Explicitly tested against:
+- ComfyUI `0.8.2` (frontend `v1.35.9`)
+- ComfyUI `0.9.2` (frontend `v1.36.14`) — full offline suite, live submit round-trips, and a 300-template conversion sweep
+- ComfyUI `0.33.0` (frontend `v1.49`) — subgraph/promoted-widget and V3 dynamic-combo workflows
 
 ---
 ## The Two `ComfyUI Formats` you should know about

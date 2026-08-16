@@ -638,22 +638,109 @@ def run(collector: ResultCollector, **kwargs) -> None:
             "T": {
                 "input": {
                     "required": {
+                        # Widgets:
                         "value": ["BOOLEAN", {}],
+                        "combo": [["a", "b"]],
+                        "steps": ["INT", {"tooltip": "tooltip-only INT is still a widget"}],
+                        "color": ["COLOR", {"default": "#ffffff", "socketless": True}],
+                        "editor_state": ["BOUNDING_BOXES", {"default": [], "socketless": False}],
+                        "frame_rate": ["FLOAT,INT", {"default": 25.0, "widgetType": "FLOAT"}],
+                        # Connections:
                         "on_false": ["COMFY_MATCHTYPE_V3", {"template": {"template_id": "x", "allowed_types": "*"}}],
                         "img": ["IMAGE", {}],
-                        "combo": [["a", "b"]],
+                        "model": ["MODEL", {"display_name": "model"}],
+                        "grow": ["COMFY_AUTOGROW_V3", {"template": {"input": {"required": {"image": ["IMAGE", {}]}}, "prefix": "image"}}],
+                        "multi_conn": ["BOUNDING_BOX,ARRAY,STRING", {"tooltip": "unmarked multi-type is a connection"}],
                         "forced": ["INT", {"forceInput": True}],
                     }
                 }
             }
         }
         names = get_widget_input_names("T", node_info, use_api=True)
-        assert names == ["value", "combo"], f"widget classification wrong: {names!r}"
+        expected = ["value", "combo", "steps", "color", "editor_state", "frame_rate"]
+        assert names == expected, f"widget classification wrong: {names!r} != {expected!r}"
         return {
-            "input": "BOOLEAN{}, MATCHTYPE_V3, IMAGE{}, combo list, forceInput INT",
+            "input": "6 widget specs (incl. socketless/widgetType) + 6 connection specs",
             "output": f"widgets: {names}",
             "result": "✓ V3 widget/connection classification",
         }
-    _run_test(collector, stage, "4.37", "Widget classification: bare BOOLEAN widget, V3 matchtype connection", t_4_37)
+    _run_test(collector, stage, "4.37", "Widget classification: V3 widgets vs connections", t_4_37)
+
+    def t_4_38():
+        sg_a = "aaaa0000-0000-4000-8000-000000000001"
+        sg_b = "bbbb0000-0000-4000-8000-000000000002"
+        node_info = {
+            "TestProduce": {"input": {}, "output": ["IMAGE"]},
+            "TestConsume": {"input": {"required": {"img": ["IMAGE", {}], "val": ["INT", {"default": 0}]}}},
+        }
+        wf = {
+            "last_node_id": 11,
+            "last_link_id": 30,
+            "nodes": [
+                # Upstream instance first, so flattening it consumes/rewrites
+                # link 30 before the downstream instance resolves it.
+                {"id": 10, "type": sg_a, "inputs": [], "outputs": [{"name": "out", "links": [30]}], "widgets_values": []},
+                {
+                    "id": 11,
+                    "type": sg_b,
+                    "inputs": [{"name": "img", "type": "IMAGE", "link": 30}],
+                    "outputs": [],
+                    # Null-padded serialization variant: one promoted INT widget.
+                    "widgets_values": [None, None, 42],
+                },
+            ],
+            "links": [[30, 10, 0, 11, 0, "IMAGE"]],
+            "definitions": {
+                "subgraphs": [
+                    {
+                        "id": sg_a,
+                        "name": "Producer",
+                        "inputs": [],
+                        "outputs": [{"id": "o0", "name": "out", "type": "IMAGE"}],
+                        "nodes": [{"id": 1, "type": "TestProduce", "inputs": [], "outputs": [{"name": "o", "links": [1]}], "widgets_values": []}],
+                        "links": [{"id": 1, "origin_id": 1, "origin_slot": 0, "target_id": -20, "target_slot": 0, "type": "IMAGE"}],
+                    },
+                    {
+                        "id": sg_b,
+                        "name": "Consumer",
+                        "inputs": [
+                            {"id": "i0", "name": "img", "type": "IMAGE", "linkIds": [2]},
+                            {"id": "i1", "name": "val", "type": "INT", "linkIds": [3]},
+                        ],
+                        "outputs": [],
+                        "nodes": [
+                            {
+                                "id": 1,
+                                "type": "TestConsume",
+                                "inputs": [
+                                    {"name": "img", "type": "IMAGE", "link": 2},
+                                    {"name": "val", "type": "INT", "link": 3, "widget": {"name": "val"}},
+                                ],
+                                "outputs": [],
+                                "widgets_values": [0],
+                            }
+                        ],
+                        "links": [
+                            {"id": 2, "origin_id": -10, "origin_slot": 0, "target_id": 1, "target_slot": 0, "type": "IMAGE"},
+                            {"id": 3, "origin_id": -10, "origin_slot": 1, "target_id": 1, "target_slot": 1, "type": "INT"},
+                        ],
+                    },
+                ]
+            },
+        }
+        api = Flow.load(wf).convert(node_info=node_info)
+        raw = getattr(api, "unwrap", lambda: dict(api))()
+        by_type = {n["class_type"]: (nid, n) for nid, n in raw.items() if isinstance(n, dict)}
+        prod_id, _ = by_type["TestProduce"]
+        _, consume = by_type["TestConsume"]
+        img = consume["inputs"].get("img")
+        assert img == [prod_id, 0], f"chained subgraph link lost: {consume['inputs']!r}"
+        assert consume["inputs"].get("val") == 42, f"null-padded promoted value wrong: {consume['inputs']!r}"
+        return {
+            "input": "SG_A instance output → SG_B instance input; wv [null, null, 42]",
+            "output": json.dumps(consume["inputs"]),
+            "result": "✓ chained subgraphs + null-padded widgets_values",
+        }
+    _run_test(collector, stage, "4.38", "Chained subgraph instances + null-padded instance widgets", t_4_38)
 
     _print_stage_summary(collector, stage)
