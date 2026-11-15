@@ -62,6 +62,12 @@ WIDGET_OPTION_KEYS = {
     "image_upload", "video_upload", "audio_upload", "file_upload", "text_upload",
 }
 
+# Widget types whose value the ComfyUI editor produces when it queues a prompt
+# (a render of the 3D viewport, a webcam frame, a recording). Their specs carry
+# no widget marker, they take a place in widgets_values, and a workflow file
+# holds no usable value for them.
+QUEUE_TIME_WIDGET_TYPES = {"LOAD_3D", "LOAD_3D_ANIMATION", "LOAD_3D_ADVANCED", "WEBCAM", "AUDIO_RECORD"}
+
 AUTOGROW_TYPE = "COMFY_AUTOGROW_V3"
 DYNAMIC_COMBO_TYPE = "COMFY_DYNAMICCOMBO_V3"
 
@@ -99,6 +105,8 @@ def is_widget_spec(spec: Any) -> bool:
       (COLOR, CURVE, custom editor types; multi-type inputs like "FLOAT,INT")
     - legacy/custom widget types ("INT:seed", "EASY_COMBO") whose options
       carry widget config: a non-null default, min/max/step, options, upload flags
+    - the editor's capture widgets (LOAD_3D, WEBCAM, AUDIO_RECORD), see
+      ``QUEUE_TIME_WIDGET_TYPES``
 
     Connections:
     - anything with ``forceInput: true``
@@ -115,11 +123,19 @@ def is_widget_spec(spec: Any) -> bool:
         return True
     if "socketless" in opts or opts.get("widgetType"):
         return True
-    if isinstance(head, str) and head.upper() in WIDGET_TYPE_NAMES:
+    if isinstance(head, str) and (head.upper() in WIDGET_TYPE_NAMES or head.upper() in QUEUE_TIME_WIDGET_TYPES):
         return True
     if opts.get("default") is not None or any(k in opts for k in WIDGET_OPTION_KEYS):
         return True
     return False
+
+
+def is_queue_time_spec(spec: Any) -> bool:
+    """True for a widget the ComfyUI editor fills in when it queues (see ``QUEUE_TIME_WIDGET_TYPES``)."""
+    return (
+        _is_sequence(spec) and len(spec) > 0 and isinstance(spec[0], str)
+        and spec[0].upper() in QUEUE_TIME_WIDGET_TYPES and not _spec_options(spec).get("forceInput")
+    )
 
 
 def _is_connection_only_input(spec: list) -> bool:
@@ -264,7 +280,7 @@ def default_for_spec(spec: Any) -> Any:
             if _is_dict_like(option):
                 return option.get("key")
         return None
-    if kind == "STRING":
+    if kind == "STRING" or kind in QUEUE_TIME_WIDGET_TYPES:
         return ""
     if kind == "BOOLEAN":
         return False

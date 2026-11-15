@@ -1000,4 +1000,53 @@ def run(collector: ResultCollector, **kwargs) -> None:
         }
     _run_test(collector, stage, "4.45", "Bypass slot choice, widget fallback for muted sources, typed curve values", t_4_45)
 
+    def t_4_46():
+        node_info = {
+            "Load3D": {"input": {"required": {
+                "model_file": ["COMBO", {"options": ["a.glb"], "file_upload": True}],
+                "image": ["LOAD_3D", {}],
+                "width": ["INT", {"default": 1024, "min": 1, "max": 4096}],
+                "height": ["INT", {"default": 1024, "min": 1, "max": 4096}],
+            }}, "output": ["IMAGE", "FILE_3D"]},
+            "Save3D": {"input": {"required": {
+                "model_3d": ["FILE_3D", {}],
+                "filename_prefix": ["STRING", {"default": "3d/ComfyUI"}],
+                "viewport_state": ["LOAD_3D", {}],
+                "width": ["INT", {"default": 1024, "min": 1, "max": 4096}],
+                "height": ["INT", {"default": 1024, "min": 1, "max": 4096}],
+            }}, "output": []},
+            "Webcam": {"input": {"required": {
+                "image": ["WEBCAM", {}],
+                "width": ["INT", {"default": 0, "min": 0, "max": 16384}],
+                "capture_on_queue": ["BOOLEAN", {"default": True}],
+            }}, "output": ["IMAGE"]},
+        }
+        wf = {
+            "last_node_id": 3,
+            "last_link_id": 1,
+            "nodes": [
+                # The editor saves its three button widgets between model_file and image.
+                {"id": 1, "type": "Load3D", "inputs": [],
+                 "outputs": [{"name": "image", "type": "IMAGE", "links": []}, {"name": "model_3d", "type": "FILE_3D", "links": [1]}],
+                 "widgets_values": ["toy.glb", "upload3dmodel", "uploadExtraResources", "clear", "", 512, 768]},
+                {"id": 2, "type": "Save3D", "inputs": [{"name": "model_3d", "type": "FILE_3D", "link": 1}], "outputs": [],
+                 "widgets_values": ["3d/out", "", 640, 480]},
+                {"id": 3, "type": "Webcam", "inputs": [], "outputs": [], "widgets_values": [None, 320, False]},
+            ],
+            "links": [[1, 1, 1, 2, 0, "FILE_3D"]],
+        }
+        res = Flow.load(wf).convert_with_errors(node_info=node_info)
+        raw = getattr(res.data, "unwrap", lambda: dict(res.data))()
+        assert raw["1"]["inputs"] == {"model_file": "toy.glb", "image": "", "width": 512, "height": 768}, f"{raw['1']['inputs']!r}"
+        assert raw["2"]["inputs"] == {"model_3d": ["1", 1], "filename_prefix": "3d/out", "viewport_state": "", "width": 640, "height": 480}, f"{raw['2']['inputs']!r}"
+        assert raw["3"]["inputs"] == {"image": "", "width": 320, "capture_on_queue": False}, f"{raw['3']['inputs']!r}"
+        told = sorted((w.details["class_type"], w.details["input"]) for w in res.warnings if w.details and w.details.get("queue_time"))
+        assert told == [("Load3D", "image"), ("Save3D", "viewport_state"), ("Webcam", "image")], told
+        return {
+            "input": "LOAD_3D and WEBCAM widgets between other widgets and the editor's button entries",
+            "output": json.dumps(raw["1"]["inputs"]),
+            "result": "✓ they take their slot, keep the saved value, and each one is reported",
+        }
+    _run_test(collector, stage, "4.46", "Widgets the editor fills at queue time are aligned and reported", t_4_46)
+
     _print_stage_summary(collector, stage)

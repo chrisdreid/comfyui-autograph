@@ -35,6 +35,8 @@ from .defaults import (
 from .origin import NodeInfoOrigin
 from .connection import (
     CONTROL_AFTER_GENERATE_CHOICES,
+    QUEUE_TIME_WIDGET_TYPES,
+    is_queue_time_spec,
     default_for_spec,
     WIDGET_OPTION_KEYS,
     WIDGET_TYPE_NAMES,
@@ -1430,6 +1432,12 @@ def _fits_widget_spec(value: Any, spec: Any) -> bool:
                 return isinstance(value, bool) or value in (0, 1)
             if t == "STRING":
                 return isinstance(value, str)
+            if t in QUEUE_TIME_WIDGET_TYPES:
+                # Saved as an empty string, an uploaded file name or a state
+                # object; never one of the button labels saved around it.
+                if t.startswith("LOAD_3D"):
+                    return value is None or value == "" or isinstance(value, dict)
+                return value is None or isinstance(value, str)
             if t == "COMBO":
                 options = opts.get("options") if isinstance(opts, dict) else None
                 if isinstance(options, list) and options and not opts.get("multiselect"):
@@ -1874,6 +1882,20 @@ def workflow_to_api_format_with_errors(
                     inputs[widget_names[i]] = {"__value__": widgets_values[i]}
                 else:
                     inputs[widget_names[i]] = widgets_values[i]
+                if use_api and is_queue_time_spec(spec_i) and not isinstance(widgets_values[i], dict):
+                    warnings.append(
+                        ConversionError(
+                            category=ErrorCategory.NODE_PROCESSING,
+                            severity=ErrorSeverity.WARNING,
+                            message=(
+                                f"{class_type}.{widget_names[i]} ({spec_i[0]}) is filled in by the ComfyUI editor when it "
+                                f"queues a prompt; the workflow holds {widgets_values[i]!r}. Set it before submitting."
+                            ),
+                            node_id=node_id_str,
+                            details={"class_type": class_type, "input": widget_names[i], "value": widgets_values[i],
+                                     "queue_time": spec_i[0]},
+                        )
+                    )
                 if use_api and _is_unlisted_choice(widgets_values[i], spec_i):
                     warnings.append(
                         ConversionError(
