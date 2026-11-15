@@ -979,5 +979,296 @@ def run(collector: ResultCollector, **kwargs) -> None:
         return {"input": "add same blueprint 5x", "output": f"ids={ids}", "result": "✓ unique IDs"}
     _run_test(collector, stage, "9.39", "ID uniqueness after repeated blueprint adds", t_9_39)
 
+    # -----------------------------------------------------------------------
+    # 9.40+ — builder fidelity: what the builder writes converts back to what was asked for
+    # -----------------------------------------------------------------------
+    V3_NODE_INFO = {
+        "Src": {"input": {}, "output": ["IMAGE"], "output_name": ["IMAGE"]},
+        "Model": {"input": {}, "output": ["MODEL"], "output_name": ["MODEL"]},
+        "PrimInt": {"input": {"required": {"value": ["INT", {"default": 0, "control_after_generate": True}]}},
+                    "output": ["INT"], "output_name": ["INT"]},
+        "PrimText": {"input": {"required": {"value": ["STRING", {"multiline": True}]}},
+                     "output": ["STRING"], "output_name": ["STRING"]},
+        "PrimBool": {"input": {"required": {"value": ["BOOLEAN", {}]}}, "output": ["BOOLEAN"], "output_name": ["BOOLEAN"]},
+        "Sampler": {
+            "input": {"required": {
+                "model": ["MODEL", {}],
+                "seed": ["INT", {"default": 0, "min": 0, "max": 2**64, "control_after_generate": True}],
+                "steps": ["INT", {"default": 20, "min": 1, "max": 10000}],
+                "cfg": ["FLOAT", {"default": 8.0, "min": 0.0, "max": 100.0}],
+                "sampler_name": [["euler", "dpmpp_2m"], {}],
+            }},
+            "output": ["LATENT"], "output_name": ["LATENT"],
+        },
+        "Regex": {
+            "input": {"required": {
+                "string": ["STRING", {"multiline": True}],
+                "regex_pattern": ["STRING", {"multiline": True}],
+                "replace": ["STRING", {"multiline": True}],
+            }, "optional": {"count": ["INT", {"default": 0, "min": 0, "max": 100}]}},
+            "output": ["STRING"], "output_name": ["STRING"],
+        },
+        "Switch": {
+            "input": {"required": {"switch": ["BOOLEAN", {}]}, "optional": {
+                "on_false": ["COMFY_MATCHTYPE_V3", {"template": {"template_id": "switch", "allowed_types": "*"}}],
+                "on_true": ["COMFY_MATCHTYPE_V3", {"template": {"template_id": "switch", "allowed_types": "*"}}],
+            }},
+            "output": ["COMFY_MATCHTYPE_V3"], "output_name": ["output"],
+        },
+        "Math": {
+            "input": {"required": {
+                "expression": ["STRING", {"default": "a + b", "multiline": True}],
+                "values": ["COMFY_AUTOGROW_V3", {"template": {"input": {"required": {"value": ["FLOAT,INT,BOOLEAN", {}]}},
+                                                             "names": ["a", "b", "c"], "min": 1}}],
+            }},
+            "output": ["FLOAT"], "output_name": ["FLOAT"],
+        },
+        "Batch": {
+            "input": {"required": {
+                "images": ["COMFY_AUTOGROW_V3", {"template": {"input": {"required": {"image": ["IMAGE", {}]}},
+                                                             "prefix": "image", "min": 2, "max": 4}}],
+            }},
+            "output": ["IMAGE"], "output_name": ["IMAGE"],
+        },
+        "ApiEdit": {
+            "input": {
+                "required": {
+                    "prompt": ["STRING", {"default": "", "multiline": True}],
+                    "model": ["COMFY_DYNAMICCOMBO_V3", {"options": [
+                        {"key": "m1", "inputs": {"required": {
+                            "images": ["COMFY_AUTOGROW_V3", {"template": {"input": {"required": {"image": ["IMAGE", {}]}},
+                                                                         "names": ["image_1", "image_2"], "min": 1}}],
+                            "mask": ["MASK", {}],
+                            "resolution": ["COMBO", {"options": ["1K", "2K"]}],
+                            "count": ["INT", {"default": 1, "min": 1, "max": 10}],
+                        }}},
+                        {"key": "m2", "inputs": {"required": {"resolution": ["COMBO", {"options": ["1K"]}]}}},
+                    ]}],
+                    "seed": ["INT", {"default": 0, "min": 0, "max": 2147483647, "control_after_generate": True}],
+                },
+                "optional": {"system_prompt": ["STRING", {"default": "", "multiline": True}]},
+            },
+            "output": ["IMAGE"], "output_name": ["IMAGE"],
+        },
+    }
+
+    def _api(flow):
+        api = flow.convert()
+        return json.loads(api.to_json())
+
+    def _slots(ref):
+        return [(i["name"], i["type"], "widget" in i) for i in ref._find_node_dict(ref._get_flow_data()).get("inputs", [])]
+
+    def t_9_40():
+        flow = Flow.create(node_info=V3_NODE_INFO)
+        prim = flow.add_node("PrimInt", value=30)
+        text = flow.add_node("PrimText", value="hello")
+        model = flow.add_node("Model")
+        ks = flow.add_node("Sampler", seed=7, cfg=4.5)
+        rx = flow.add_node("Regex", regex_pattern="^a", replace="b", count=2)
+        ks.connect("model", model, 0)
+        ks.connect("steps", prim, 0)                 # a widget input: needs a slot first
+        rx.connect("string", text, 0)                # a widget with no default, followed by other text widgets
+        assert ("steps", "INT", True) in _slots(ks), f"steps not promoted: {_slots(ks)}"
+        api = _api(flow)
+        assert api[ks.addr]["inputs"] == {
+            "model": [model.addr, 0], "seed": 7, "steps": [prim.addr, 0], "cfg": 4.5, "sampler_name": "euler",
+        }, f"{api[ks.addr]['inputs']!r}"
+        assert api[rx.addr]["inputs"] == {
+            "string": [text.addr, 0], "regex_pattern": "^a", "replace": "b", "count": 2,
+        }, f"{api[rx.addr]['inputs']!r}"
+        try:
+            ks.connect("no_such_input", prim, 0)
+        except ValueError as exc:
+            assert "not found" in str(exc)
+        else:
+            raise AssertionError("connect() to an input the node does not have must fail")
+        return {"input": "connect('steps', prim) / connect('string', text)", "output": json.dumps(api[ks.addr]["inputs"]),
+                "result": "✓ widget inputs take links; neighbours keep their values"}
+    _run_test(collector, stage, "9.40", "connect() to a widget input creates its slot", t_9_40)
+
+    def t_9_41():
+        flow = Flow.create(node_info=V3_NODE_INFO)
+        rx = flow.add_node("Regex", regex_pattern="^a")
+        wv = rx._find_node_dict(rx._get_flow_data())["widgets_values"]
+        assert wv == ["", "^a", "", 0], f"new widgets must not start as None: {wv!r}"
+        sw = flow.add_node("Switch")
+        assert sw._find_node_dict(sw._get_flow_data())["widgets_values"] == [False]
+        api = _api(flow)
+        assert api[rx.addr]["inputs"] == {"string": "", "regex_pattern": "^a", "replace": "", "count": 0}, f"{api[rx.addr]['inputs']!r}"
+        return {"input": "add_node('Regex', regex_pattern='^a')", "output": str(wv),
+                "result": "✓ editor-like initial values; nothing shifts on convert"}
+    _run_test(collector, stage, "9.41", "New widgets start at the editor's initial value, never None", t_9_41)
+
+    def t_9_42():
+        flow = Flow.create(node_info=V3_NODE_INFO)
+        src = flow.add_node("Src")
+        node = flow.add_node("ApiEdit", prompt="night", seed=5, **{"model": "m1", "model.resolution": "2K", "model.count": 3})
+        nd = node._find_node_dict(node._get_flow_data())
+        assert nd["widgets_values"] == ["night", "m1", "2K", 3, 5, "randomize", ""], f"{nd['widgets_values']!r}"
+        assert _slots(node) == [("model.images.image_1", "IMAGE", False), ("model.mask", "MASK", False)], f"{_slots(node)}"
+        node.connect("model.images.image_1", src, 0)
+        node.connect("model.images.image_2", src, 0)          # the group grows on demand
+        try:
+            node.connect("model.images.image_9", src, 0)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("image_9 is not a member of the group")
+        want = {
+            "prompt": "night", "model": "m1", "model.resolution": "2K", "model.count": 3, "seed": 5, "system_prompt": "",
+            "model.images.image_1": [src.addr, 0], "model.images.image_2": [src.addr, 0],
+        }
+        assert _api(flow)[node.addr]["inputs"] == want, f"{_api(flow)[node.addr]['inputs']!r}"
+        # Reading and writing by name finds the right entry, sub-widgets included.
+        assert node.seed == 5 and getattr(node, "model.count") == 3, (node.seed, getattr(node, "model.count"))
+        node.seed = 99
+        setattr(node, "model.count", 7)
+        assert nd["widgets_values"] == ["night", "m1", "2K", 7, 99, "randomize", ""], f"{nd['widgets_values']!r}"
+        other = flow.add_node("ApiEdit", model="m2")
+        assert other._find_node_dict(other._get_flow_data())["widgets_values"] == ["", "m2", "1K", 0, "randomize", ""]
+        assert _slots(other) == []
+        return {"input": "add_node('ApiEdit', **{'model': 'm1', 'model.resolution': '2K', ...})",
+                "output": json.dumps(want), "result": "✓ dynamic combo sub-widgets and connection sub-inputs"}
+    _run_test(collector, stage, "9.42", "Dynamic combos: dotted overrides, option slots, access by name", t_9_42)
+
+    def t_9_43():
+        assert get_connection_input_names("Switch", V3_NODE_INFO) == ["on_false", "on_true"]
+        assert get_input_default("Switch", "switch", V3_NODE_INFO) is False
+        flow = Flow.create(node_info=V3_NODE_INFO)
+        src = flow.add_node("Src")
+        flag = flow.add_node("PrimBool", value=True)
+        sw = flow.add_node("Switch", switch=True)
+        # ["BOOLEAN", {}] is a widget for the converter, so it must not also be a bare slot.
+        assert _slots(sw) == [("on_false", "COMFY_MATCHTYPE_V3", False), ("on_true", "COMFY_MATCHTYPE_V3", False)], f"{_slots(sw)}"
+        src.outputs.IMAGE >> sw.inputs.on_true
+        assert _api(flow)[sw.addr]["inputs"] == {"switch": True, "on_true": [src.addr, 0]}
+        flag.outputs.BOOLEAN >> sw.inputs.switch
+        assert ("switch", "BOOLEAN", True) in _slots(sw)
+        assert _api(flow)[sw.addr]["inputs"] == {"switch": [flag.addr, 0], "on_true": [src.addr, 0]}
+        return {"input": "Switch: switch=['BOOLEAN', {}], on_true/on_false match-type",
+                "output": str(_slots(sw)), "result": "✓ builder and converter classify inputs the same way"}
+    _run_test(collector, stage, "9.43", "V3 specs: one widget/connection rule for builder and converter", t_9_43)
+
+    def t_9_44():
+        flow = Flow.create(node_info=V3_NODE_INFO)
+        a, b = flow.add_node("PrimInt", value=1), flow.add_node("PrimInt", value=2)
+        math = flow.add_node("Math", expression="a * b")
+        assert _slots(math) == [("values.a", "FLOAT,INT,BOOLEAN", False)], f"{_slots(math)}"
+        math.connect("values.a", a, 0)
+        math.connect("values.b", b, 0)
+        batch = flow.add_node("Batch")
+        assert [n for n, _t, _w in _slots(batch)] == ["images.image0", "images.image1"], f"{_slots(batch)}"
+        src = flow.add_node("Src")
+        batch.connect("images.image0", src, 0)
+        src.outputs.IMAGE >> batch.inputs["images.image3"]      # the views grow the group too
+        assert "images.image9" not in [n for n, _t, _w in _slots(batch)]
+        for bad in ("images.image4", "images.other"):
+            try:
+                batch.connect(bad, src, 0)
+            except ValueError:
+                continue
+            raise AssertionError(f"{bad} is outside the group")
+        api = _api(flow)
+        assert api[math.addr]["inputs"] == {"expression": "a * b", "values.a": [a.addr, 0], "values.b": [b.addr, 0]}
+        assert api[batch.addr]["inputs"] == {"images.image0": [src.addr, 0], "images.image3": [src.addr, 0]}
+        return {"input": "autogrow groups by names and by prefix", "output": json.dumps(api[math.addr]["inputs"]),
+                "result": "✓ member slots exist and grow on connect"}
+    _run_test(collector, stage, "9.44", "Autogrow inputs: member slots, grown on demand", t_9_44)
+
+    def t_9_45():
+        ni3 = NodeInfo(V3_NODE_INFO)
+        bp = ni3.Sampler(seed=1)
+        assert bp.steps == 20 and bp.cfg == 8.0 and bp.sampler_name == "euler", f"{bp.widgets!r}"
+        bp.steps = 33
+        assert bp.widgets == {"seed": 1, "steps": 33, "cfg": 8.0, "sampler_name": "euler"}, f"{bp.widgets!r}"
+        flow = Flow.create(node_info=ni3)
+        first = flow.add_node(bp, cfg=5.0)                      # detached node + override
+        second = flow.add_node(first, steps=44, sampler_name="dpmpp_2m")   # copy + override
+        api = _api(flow)
+        assert api[first.addr]["inputs"] == {"seed": 1, "steps": 33, "cfg": 5.0, "sampler_name": "euler"}, f"{api[first.addr]!r}"
+        assert api[second.addr]["inputs"] == {"seed": 1, "steps": 44, "cfg": 5.0, "sampler_name": "dpmpp_2m"}, f"{api[second.addr]!r}"
+        wv = second._find_node_dict(second._get_flow_data())["widgets_values"]
+        assert wv == [1, "randomize", 44, 5.0, "dpmpp_2m"], f"control value overwritten: {wv!r}"
+        return {"input": "ni.Sampler(seed=1).steps; overrides on detached and copied nodes", "output": str(wv),
+                "result": "✓ names map to the right entries past control_after_generate"}
+    _run_test(collector, stage, "9.45", "Widgets after control_after_generate: read, write, override", t_9_45)
+
+    def t_9_46():
+        big = dict(V3_NODE_INFO)
+        for i in range(400):
+            big[f"Filler{i}"] = {"input": {"required": {"x": ["INT", {"default": i}]}}, "output": ["INT"], "output_name": ["INT"]}
+        ni3 = NodeInfo(big)
+        flow = Flow.create(node_info=ni3)
+        calls = []
+        real = json.dumps
+
+        def counting(obj, *a, **k):
+            out = real(obj, *a, **k)
+            calls.append(len(out))
+            return out
+
+        json.dumps = counting
+        try:
+            ks = flow.add_node("Sampler", seed=3)
+            model = flow.add_node("Model")
+            ks.connect("model", model, 0)
+            _ = ks.seed, ks.steps, ks.model
+            dir(ks)
+            _ = ni3.Sampler
+            ni3.Sampler(seed=1)
+        finally:
+            json.dumps = real
+        assert not [n for n in calls if n > 2000], f"node_info was serialized {len(calls)} times: sizes {calls[:6]}"
+        return {"input": "add_node / connect / attribute access with 400+ node types", "output": f"{len(calls)} json.dumps calls",
+                "result": "✓ node_info is read, not re-serialized"}
+    _run_test(collector, stage, "9.46", "Builder does not re-serialize node_info on every call", t_9_46)
+
+    def t_9_47():
+        import warnings
+        flow = Flow.create(node_info=V3_NODE_INFO)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            flow.add_node("Sampler", sede=1, steps=5)
+        assert len(caught) == 1 and "'sede'" in str(caught[0].message), [str(w.message) for w in caught]
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            flow.add_node("Sampler", seed=1, control_after_generate="fixed")
+        assert not caught, [str(w.message) for w in caught]
+        return {"input": "add_node('Sampler', sede=1)", "output": "1 warning naming 'sede'", "result": "✓ typos are not silent"}
+    _run_test(collector, stage, "9.47", "Unknown widget names passed to add_node warn", t_9_47)
+
+    def t_9_48():
+        prompt = {
+            "1": {"class_type": "Src", "inputs": {}},
+            "2": {"class_type": "PrimInt", "inputs": {"value": 12}},
+            "3": {"class_type": "PrimText", "inputs": {"value": "x"}},
+            "4": {"class_type": "ApiEdit", "inputs": {
+                "prompt": ["3", 0], "model": "m1", "model.resolution": "2K", "model.count": ["2", 0], "seed": 9,
+                "system_prompt": "be brief", "model.images.image_1": ["1", 0], "model.mask": ["1", 0]}},
+            "5": {"class_type": "Switch", "inputs": {"switch": False, "on_false": ["4", 0], "on_true": ["1", 0]}},
+            "6": {"class_type": "Batch", "inputs": {"images.image0": ["5", 0], "images.image1": ["1", 0]}},
+        }
+        flow = Flow.create(node_info=V3_NODE_INFO)
+        refs = {}
+        for nid, node in prompt.items():
+            values = {k: v for k, v in node["inputs"].items() if not isinstance(v, list)}
+            refs[nid] = flow.add_node(node["class_type"], **values)
+        for nid, node in prompt.items():
+            for name, v in node["inputs"].items():
+                if isinstance(v, list):
+                    refs[nid].connect(name, refs[v[0]], v[1])
+        back = _api(flow)
+        ids = {ref.addr: nid for nid, ref in refs.items()}
+        mapped = {
+            ids[bid]: {"class_type": n["class_type"],
+                       "inputs": {k: ([ids[v[0]], v[1]] if isinstance(v, list) else v) for k, v in n["inputs"].items()}}
+            for bid, n in back.items()
+        }
+        assert mapped == prompt, f"round trip changed the graph: {json.dumps(mapped)}"
+        return {"input": "API prompt → add_node/connect → convert", "output": f"{len(prompt)} nodes identical",
+                "result": "✓ the builder can express what the converter emits"}
+    _run_test(collector, stage, "9.48", "API prompt → builder → API prompt is the identity", t_9_48)
+
     _print_stage_summary(collector, stage)
 

@@ -394,6 +394,138 @@ class ApiFlow(_MappingWrapper):
         return getattr(self._api, "dag")
 
 
+def _plain_node_info(ni: Any) -> Dict[str, Any]:
+    """node_info as plain dicts and lists, without copying when it already is.
+
+    The builder helpers use ``isinstance(x, dict)`` checks, so view wrappers
+    have to be unwrapped. node_info normally *is* a plain dict of plain dicts
+    (it is loaded from JSON); serializing all of it to find that out costs
+    tens of milliseconds with a real server's node list, on every call.
+    """
+    if isinstance(ni, _MappingWrapper):
+        ni = getattr(ni, "_data", ni)
+    getter = getattr(ni, "_get_data", None)
+    if callable(getter):
+        ni = getter()
+    if isinstance(ni, dict):
+        # dict.items() reads the stored values; a dict subclass (NodeInfo) may
+        # wrap them in views when accessed through its own methods.
+        raw = dict(dict.items(ni))
+        if all(type(v) is dict for v in raw.values()):
+            return raw
+    import json as _json
+    return _json.loads(_json.dumps(dict(ni)))
+
+
+def _build_node_parts(
+    class_type: str,
+    ni_dict: Dict[str, Any],
+    widget_overrides: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Any], Dict[str, int]]:
+    """Input slots, output slots, widgets_values and a widget-name → index map for a new node.
+
+    Mirrors what the ComfyUI editor creates:
+
+    - an input slot per connection input; autogrow groups get their first
+      member slots (``values.a``), and the selected option of a dynamic combo
+      contributes its connection inputs (``model.mask``);
+    - ``widgets_values`` in input order: each widget's value, the
+      control_after_generate combo after a widget that declares it, and after
+      a dynamic combo the sub-widgets of its selected option
+      (override them by dotted name: ``**{"resize_type.width": 512}``).
+
+    Widgets without an override get the value a new node shows in the editor.
+    """
+    from .connection import (
+        AUTOGROW_TYPE,
+        autogrow_member_names,
+        autogrow_member_spec,
+        default_for_spec,
+        dynamic_combo_options,
+        get_output_slots,
+        is_widget_spec,
+        option_input_specs,
+        slot_type_for_spec,
+    )
+
+    type_info = ni_dict[class_type]
+    inputs_def = type_info.get("input", {})
+    top: List[Tuple[str, Any]] = []
+    if isinstance(inputs_def, dict):
+        for section in ("required", "optional"):
+            section_inputs = inputs_def.get(section, {})
+            if isinstance(section_inputs, dict):
+                top.extend(section_inputs.items())
+
+    input_slots: List[Dict[str, Any]] = []
+    widgets_values: List[Any] = []
+    widget_index: Dict[str, int] = {}
+    used: set = set()
+
+    def emit(specs: List[Tuple[str, Any]], prefix: str) -> None:
+        for name, spec in specs:
+            if not isinstance(spec, (list, tuple)) or len(spec) == 0:
+                continue
+            full = prefix + name
+            if not is_widget_spec(spec):
+                if spec[0] == AUTOGROW_TYPE:
+                    member_type = slot_type_for_spec(autogrow_member_spec(spec))
+                    for member in autogrow_member_names(spec):
+                        input_slots.append({"name": f"{full}.{member}", "type": member_type, "link": None})
+                else:
+                    input_slots.append({"name": full, "type": slot_type_for_spec(spec), "link": None})
+                continue
+            if full in widget_overrides:
+                value = widget_overrides[full]
+                used.add(full)
+                # API prompts carry list values wrapped as {"__value__": [...]}
+                # (a bare list there is a link) and curves as a typed wrapper;
+                # widgets_values holds the value itself.
+                if isinstance(value, dict) and "__value__" in value and set(value) <= {"__value__", "__type__"}:
+                    value = value["__value__"]
+            else:
+                value = default_for_spec(spec)
+            widget_index[full] = len(widgets_values)
+            widgets_values.append(value)
+            opts = spec[1] if len(spec) >= 2 and isinstance(spec[1], dict) else {}
+            # "control_after_generate": True → the frontend adds a combo
+            # ["fixed","increment","decrement","randomize"] right after it.
+            if opts.get("control_after_generate"):
+                used.add("control_after_generate")
+                widgets_values.append(widget_overrides.get("control_after_generate", "randomize"))
+            for option in dynamic_combo_options(spec):
+                if option.get("key") == value:
+                    emit(option_input_specs(option), full + ".")
+                    break
+
+    emit(top, "")
+
+    unknown = sorted(set(widget_overrides) - used)
+    if unknown:
+        import warnings as _warnings
+        _warnings.warn(
+            f"{class_type} has no widget named {', '.join(repr(u) for u in unknown)}; ignored. "
+            f"Widgets: {list(widget_index)}",
+            stacklevel=4,
+        )
+
+    output_slots = [
+        {"name": name, "type": out_type, "slot_index": idx, "links": []}
+        for idx, name, out_type in get_output_slots(class_type, ni_dict)
+    ]
+    return input_slots, output_slots, widgets_values, widget_index
+
+
+def _widget_positions(class_type: str, node_dict: Dict[str, Any], node_info: Any) -> Dict[str, int]:
+    """Widget name → index in an existing node's widgets_values (dotted names included)."""
+    from .convert import expand_widget_names, get_widget_input_names
+
+    names = get_widget_input_names(class_type, node_info, use_api=True)
+    values = node_dict.get("widgets_values") or []
+    expanded, _aligned, indices = expand_widget_names(class_type, list(values), names, node_info)
+    return {name: index for name, index in zip(expanded, indices) if index is not None}
+
+
 class Node:
     """Detached node — fully formed but not attached to any flow.
 
@@ -404,69 +536,16 @@ class Node:
     The node can be stamped into multiple flows or copied freely.
     """
 
-    __slots__ = ("_node_dict", "_ni_dict", "_class_type", "_widget_names")
+    __slots__ = ("_node_dict", "_ni_dict", "_class_type", "_widget_names", "_widget_index")
 
     def __init__(self, class_type: str, ni_dict: Dict[str, Any], **widget_overrides: Any):
-        from .connection import (
-            get_connection_input_names,
-            get_output_slots,
-            get_input_default,
-        )
-        from .convert import get_widget_input_names
-
         if class_type not in ni_dict:
             raise ValueError(f"Unknown node class '{class_type}'. Not found in node_info.")
 
-        type_info = ni_dict[class_type]
-
-        # ---- Build input slots (connection-only) ----
-        conn_inputs = get_connection_input_names(class_type, ni_dict)
-        input_slots = []
-        for name in conn_inputs:
-            spec = None
-            inputs_def = type_info.get("input", {})
-            for section in ["required", "optional"]:
-                section_inputs = inputs_def.get(section, {})
-                if isinstance(section_inputs, dict) and name in section_inputs:
-                    spec = section_inputs[name]
-                    break
-            slot_type = spec[0] if spec and isinstance(spec[0], str) else "*"
-            input_slots.append({"name": name, "type": slot_type, "link": None})
-
-        # ---- Build output slots ----
-        out_slots_info = get_output_slots(class_type, ni_dict)
-        output_slots = []
-        for idx, name, out_type in out_slots_info:
-            output_slots.append(
-                {"name": name, "type": out_type, "slot_index": idx, "links": []}
-            )
-
-        # ---- Build widgets_values ----
-        widget_names = get_widget_input_names(class_type, ni_dict, use_api=True)
-        widgets_values = []
-        inputs_def = type_info.get("input", {})
-        for wname in widget_names:
-            if wname in widget_overrides:
-                widgets_values.append(widget_overrides[wname])
-            else:
-                default = get_input_default(class_type, wname, ni_dict)
-                widgets_values.append(default)
-
-            # Frontend-injected follow-up widgets
-            spec = None
-            for section in ["required", "optional"]:
-                section_inputs = inputs_def.get(section, {})
-                if isinstance(section_inputs, dict) and wname in section_inputs:
-                    spec = section_inputs[wname]
-                    break
-            if spec and isinstance(spec, list) and len(spec) >= 2 and isinstance(spec[1], dict):
-                opts = spec[1]
-                if opts.get("control_after_generate"):
-                    cag_key = "control_after_generate"
-                    if cag_key in widget_overrides:
-                        widgets_values.append(widget_overrides[cag_key])
-                    else:
-                        widgets_values.append("randomize")
+        input_slots, output_slots, widgets_values, widget_index = _build_node_parts(
+            class_type, ni_dict, widget_overrides
+        )
+        widget_names = list(widget_index)
 
         node_dict = {
             "id": None,  # assigned by flow.add_node()
@@ -486,6 +565,9 @@ class Node:
         object.__setattr__(self, "_ni_dict", ni_dict)
         object.__setattr__(self, "_class_type", class_type)
         object.__setattr__(self, "_widget_names", list(widget_names))
+        # widgets_values also holds entries that are not widgets of the node
+        # (the control_after_generate combo), so names map to explicit indices.
+        object.__setattr__(self, "_widget_index", dict(widget_index))
 
     @property
     def type(self) -> str:
@@ -512,7 +594,7 @@ class Node:
         """Dict of {widget_name: value}."""
         wv = self._node_dict.get("widgets_values", [])
         result = {}
-        for i, name in enumerate(self._widget_names):
+        for name, i in self._widget_index.items():
             if i < len(wv):
                 result[name] = wv[i]
         return result
@@ -522,10 +604,9 @@ class Node:
             raise AttributeError(name)
         # Widget access
         wv = object.__getattribute__(self, "_node_dict").get("widgets_values", [])
-        wnames = object.__getattribute__(self, "_widget_names")
-        for i, wname in enumerate(wnames):
-            if wname == name and i < len(wv):
-                return wv[i]
+        i = object.__getattribute__(self, "_widget_index").get(name)
+        if i is not None and i < len(wv):
+            return wv[i]
         raise AttributeError(f"Node '{self._class_type}' has no widget '{name}'")
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -533,10 +614,10 @@ class Node:
             return object.__setattr__(self, name, value)
         # Widget set
         wv = self._node_dict.get("widgets_values", [])
-        for i, wname in enumerate(self._widget_names):
-            if wname == name and i < len(wv):
-                wv[i] = value
-                return
+        i = self._widget_index.get(name)
+        if i is not None and i < len(wv):
+            wv[i] = value
+            return
         raise AttributeError(f"Node '{self._class_type}' has no widget '{name}'")
 
     def __dir__(self) -> List[str]:
@@ -855,15 +936,6 @@ class Flow(_MappingWrapper):
         Raises:
             ValueError: If node_info is not available or class_type unknown.
         """
-        from .connection import (
-            get_connection_input_names,
-            get_output_slots,
-            get_all_input_names,
-            get_input_default,
-            _is_connection_only_input,
-        )
-        from .convert import get_widget_input_names
-
         # ---- Dispatch: resolve class_type + merge overrides ----
         if isinstance(node, Node):
             return self._add_detached_node(node, **widget_overrides)
@@ -889,72 +961,16 @@ class Flow(_MappingWrapper):
             raise ValueError(
                 "Flow has no node_info — pass node_info= to Flow.create() first."
             )
-        # Deep-unwrap any DictView/ListView wrappers from NodeInfo to plain
-        # dicts/lists so isinstance checks work correctly.
-        import json as _json
-        ni_dict = _json.loads(_json.dumps(dict(ni)))
+        ni_dict = _plain_node_info(ni)
 
         if class_type not in ni_dict:
             raise ValueError(
                 f"Unknown node class '{class_type}'. Not found in node_info."
             )
-        type_info = ni_dict[class_type]
 
-        # ---- Build input slots (connection-only inputs) ----
-        conn_inputs = get_connection_input_names(class_type, ni_dict)
-        input_slots = []
-        for name in conn_inputs:
-            # Determine the type from node_info
-            spec = None
-            inputs_def = type_info.get("input", {})
-            for section in ["required", "optional"]:
-                section_inputs = inputs_def.get(section, {})
-                if isinstance(section_inputs, dict) and name in section_inputs:
-                    spec = section_inputs[name]
-                    break
-            slot_type = spec[0] if spec and isinstance(spec[0], str) else "*"
-            input_slots.append({"name": name, "type": slot_type, "link": None})
-
-        # ---- Build output slots ----
-        out_slots_info = get_output_slots(class_type, ni_dict)
-        output_slots = []
-        for idx, name, out_type in out_slots_info:
-            output_slots.append(
-                {"name": name, "type": out_type, "slot_index": idx, "links": []}
-            )
-
-        # ---- Build widgets_values ----
-        # ComfyUI's frontend injects extra widgets for certain flags in the
-        # widget options dict (e.g. "control_after_generate": True adds a combo
-        # widget right after the INT widget). We must replicate this so the
-        # positional widgets_values array stays aligned.
-        widget_names = get_widget_input_names(class_type, ni_dict, use_api=True)
-        widgets_values = []
-        inputs_def = type_info.get("input", {})
-        for wname in widget_names:
-            if wname in widget_overrides:
-                widgets_values.append(widget_overrides[wname])
-            else:
-                default = get_input_default(class_type, wname, ni_dict)
-                widgets_values.append(default)
-
-            # Check for frontend-injected follow-up widgets
-            spec = None
-            for section in ["required", "optional"]:
-                section_inputs = inputs_def.get(section, {})
-                if isinstance(section_inputs, dict) and wname in section_inputs:
-                    spec = section_inputs[wname]
-                    break
-            if spec and isinstance(spec, list) and len(spec) >= 2 and isinstance(spec[1], dict):
-                opts = spec[1]
-                # "control_after_generate": True → ComfyUI injects a combo
-                # widget with choices ["fixed","increment","decrement","randomize"]
-                if opts.get("control_after_generate"):
-                    cag_key = "control_after_generate"
-                    if cag_key in widget_overrides:
-                        widgets_values.append(widget_overrides[cag_key])
-                    else:
-                        widgets_values.append("randomize")
+        input_slots, output_slots, widgets_values, _widget_index = _build_node_parts(
+            class_type, ni_dict, widget_overrides
+        )
 
         # ---- Assign ID and position ----
         last_id = self._flow.get("last_node_id", 0)
@@ -1038,7 +1054,7 @@ class Flow(_MappingWrapper):
         # Apply call-site widget overrides
         if widget_overrides:
             wv = node_dict.get("widgets_values", [])
-            for i, wname in enumerate(node._widget_names):
+            for wname, i in node._widget_index.items():
                 if wname in widget_overrides and i < len(wv):
                     wv[i] = widget_overrides[wname]
 
@@ -1105,14 +1121,11 @@ class Flow(_MappingWrapper):
         if widget_overrides and node_dict.get("widgets_values"):
             ni = getattr(self._flow, "node_info", None)
             if ni is not None:
-                import json as _json
-                ni_dict = _json.loads(_json.dumps(dict(ni)))
+                ni_dict = _plain_node_info(ni)
                 class_type = node_dict.get("type", "")
                 if class_type in ni_dict:
-                    from .convert import get_widget_input_names
-                    widget_names = get_widget_input_names(class_type, ni_dict, use_api=True)
                     wv = node_dict["widgets_values"]
-                    for i, wname in enumerate(widget_names):
+                    for wname, i in _widget_positions(class_type, node_dict, ni_dict).items():
                         if wname in widget_overrides and i < len(wv):
                             wv[i] = widget_overrides[wname]
 
@@ -1638,10 +1651,8 @@ class NodeInfo(_MappingWrapper):
         result = getattr(self._oi, name)
         # Wrap class_type lookups as NodeTypeRef (callable + passable to add_node)
         if isinstance(result, _legacy.DictView) and name in self._oi:
-            # Build a plain-dict ni_dict for Node construction
-            import json as _json
-            ni_dict = _json.loads(_json.dumps(dict(self._oi)))
-            return NodeTypeRef(result, name, ni_dict)
+            # Plain-dict node_info for Node construction
+            return NodeTypeRef(result, name, _plain_node_info(self._oi))
         return result
 
     def __dir__(self) -> list:
@@ -2130,7 +2141,21 @@ class InputsView:
             except Exception:
                 pass
             return self._make_slot(name)
+        if self._grow(name):
+            return self._make_slot(name)
         raise AttributeError(f"No input '{name}' on {self._node.type}. Available: {self._names}")
+
+    def _grow(self, name: str) -> bool:
+        """Create the slot for an input that exists by name only (autogrow member, dynamic-combo input)."""
+        try:
+            if not self._node._ensure_input_slot(name):
+                return False
+            flow = object.__getattribute__(self._node, "_flow")
+            nd = self._node._find_node_dict(flow._flow)
+            self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
+            return name in self._names
+        except Exception:
+            return False
 
     def __getitem__(self, name: str) -> SlotRef:
         if name in self._names:
@@ -2146,6 +2171,8 @@ class InputsView:
                     self._names = [inp.get("name") for inp in nd.get("inputs", []) if inp.get("name")]
             except Exception:
                 pass
+            return self._make_slot(name)
+        if self._grow(name):
             return self._make_slot(name)
         raise KeyError(f"No input '{name}' on {self._node.type}. Available: {self._names}")
 
@@ -2521,8 +2548,7 @@ class NodeRef:
             try:
                 ni = getattr(flow._flow, "node_info", None)
                 if ni is not None:
-                    import json as _json
-                    ni_dict = _json.loads(_json.dumps(dict(ni)))
+                    ni_dict = _plain_node_info(ni)
                     node_type = self.type
                     if node_type in ni_dict:
                         from .connection import get_connection_input_names
@@ -2615,8 +2641,7 @@ class NodeRef:
             try:
                 ni = getattr(flow._flow, "node_info", None)
                 if ni is not None:
-                    import json as _json
-                    ni_dict = _json.loads(_json.dumps(dict(ni)))
+                    ni_dict = _plain_node_info(ni)
                     node_type = self.type
                     if node_type in ni_dict:
                         from .connection import get_connection_input_names
@@ -2816,6 +2841,32 @@ class NodeRef:
         }
         nd.setdefault("inputs", []).append(new_input)
 
+    def _ensure_input_slot(self, name: str) -> bool:
+        """Make sure the node has an input slot called ``name``; True if it has one now.
+
+        Creates the slot for inputs that exist by definition but have none
+        yet: widget inputs (promoted, with a ``widget`` marker), members of an
+        autogrow group (``values.b``) and inputs of a dynamic-combo option
+        (``resize_type.width``, ``model.images.image_2``).
+        """
+        flow_data = self._get_flow_data()
+        nd = self._find_node_dict(flow_data)
+        for inp in nd.get("inputs", []):
+            if inp.get("name") == name:
+                return True
+        ni = getattr(flow_data, "node_info", None)
+        if ni is None:
+            return False
+        from .connection import is_widget_spec, resolve_input_spec, slot_type_for_spec
+        spec = resolve_input_spec(nd.get("type", ""), name, _plain_node_info(ni))
+        if spec is None:
+            return False
+        slot: Dict[str, Any] = {"name": name, "type": slot_type_for_spec(spec), "link": None}
+        if is_widget_spec(spec):
+            slot["widget"] = {"name": name}
+        nd.setdefault("inputs", []).append(slot)
+        return True
+
     def to_attr(self, name: str) -> None:
         """Demote an input slot back to an attr-only value.
 
@@ -2952,6 +3003,11 @@ class NodeRef:
                 dst_slot_idx = i
                 dst_slot = inp
                 break
+        if dst_slot is None and self._ensure_input_slot(input_name):
+            # A widget input, an autogrow member or a dynamic-combo input:
+            # the node can take this link, it just had no slot for it yet.
+            dst_slot_idx = len(dst_dict["inputs"]) - 1
+            dst_slot = dst_dict["inputs"][dst_slot_idx]
         if dst_slot is None:
             raise ValueError(
                 f"Input '{input_name}' not found on node {dst_dict.get('type', '?')} "

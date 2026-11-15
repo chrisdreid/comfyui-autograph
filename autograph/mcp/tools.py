@@ -548,8 +548,15 @@ def add_node(
     session = store.get(workflow_id)
     flow = session.flow
     overrides = dict(inputs or {})
+    import warnings as _warnings
+    notes: List[str] = []
     try:
-        node_ref = flow.add_node(class_type, **overrides)
+        # add_node warns about input names the node type does not have
+        # (typos, connection inputs); hand that back instead of losing it.
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            node_ref = flow.add_node(class_type, **overrides)
+        notes = [str(w.message) for w in caught]
     except Exception as exc:
         msg = str(exc)
         if "node_info" in msg.lower() or "nodeinfo" in msg.lower():
@@ -566,13 +573,16 @@ def add_node(
         except Exception:
             pass
     store.touch(workflow_id)
-    return {
+    result = {
         "workflow_id": workflow_id,
         "node_id": getattr(node_ref, "addr", None),
         "class_type": class_type,
         "title": title or "",
         **_flow_summary(flow),
     }
+    if notes:
+        result["warnings"] = notes
+    return result
 
 
 def connect_nodes(

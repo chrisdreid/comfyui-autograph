@@ -743,4 +743,261 @@ def run(collector: ResultCollector, **kwargs) -> None:
         }
     _run_test(collector, stage, "4.38", "Chained subgraph instances + null-padded instance widgets", t_4_38)
 
+    def t_4_39():
+        node_info = {
+            "Loader": {"input": {"required": {"ckpt_name": [["a.safetensors", "b.safetensors"], {}]}}, "output": ["MODEL"]},
+            "Sampler": {
+                "input": {
+                    "required": {
+                        "model": ["MODEL", {}],
+                        "seed": ["INT", {"default": 0, "min": 0, "max": 2**64, "control_after_generate": True}],
+                        "steps": ["INT", {"default": 20, "min": 1, "max": 10000}],
+                        "sampler_name": ["COMBO", {"options": ["euler", "dpmpp_2m"], "default": "euler"}],
+                        "denoise": ["FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0}],
+                    }
+                },
+                "output": ["LATENT"],
+            },
+        }
+        wf = {
+            "last_node_id": 2,
+            "last_link_id": 1,
+            "nodes": [
+                {"id": 1, "type": "Loader", "inputs": [], "outputs": [{"name": "MODEL", "type": "MODEL", "links": [1]}],
+                 "widgets_values": ["installed_later.safetensors"]},
+                {"id": 2, "type": "Sampler", "inputs": [{"name": "model", "type": "MODEL", "link": 1}], "outputs": [],
+                 "widgets_values": [7, "fixed", 30, "sampler_from_another_server", 0.5]},
+            ],
+            "links": [[1, 1, 0, 2, 0, "MODEL"]],
+        }
+        res = Flow.load(wf).convert_with_errors(node_info=node_info)
+        raw = getattr(res.data, "unwrap", lambda: dict(res.data))()
+        assert raw["1"]["inputs"]["ckpt_name"] == "installed_later.safetensors", f"model name lost: {raw['1']['inputs']!r}"
+        want = {"model": ["1", 0], "seed": 7, "steps": 30, "sampler_name": "sampler_from_another_server", "denoise": 0.5}
+        assert raw["2"]["inputs"] == want, f"unlisted choice broke alignment: {raw['2']['inputs']!r}"
+        noted = [w for w in res.warnings if "not among the options" in w.message]
+        assert len(noted) == 2, f"expected a warning per unlisted choice: {[w.message for w in res.warnings]!r}"
+        return {
+            "input": "ckpt_name / sampler_name values that node_info does not list",
+            "output": json.dumps(raw["2"]["inputs"]),
+            "result": "✓ values kept (with warnings), alignment intact",
+        }
+    _run_test(collector, stage, "4.39", "Choice values missing from node_info are kept, not nulled", t_4_39)
+
+    def t_4_40():
+        node_info = {
+            "Src": {"input": {}, "output": ["IMAGE"]},
+            "Pass": {"input": {"required": {"image": ["IMAGE", {}]}}, "output": ["IMAGE"]},
+            "Mix": {"input": {"required": {"a": ["IMAGE", {}]}, "optional": {"b": ["IMAGE", {}], "c": ["IMAGE", {}], "d": ["IMAGE", {}]}}, "output": []},
+        }
+
+        def node(i, t, mode=0, inputs=None, outs=1):
+            return {"id": i, "type": t, "mode": mode, "inputs": inputs or [],
+                    "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": []}] * outs, "widgets_values": []}
+
+        wf = {
+            "last_node_id": 6,
+            "last_link_id": 6,
+            "nodes": [
+                node(1, "Src"),
+                node(2, "Src", mode=2),                                                   # muted source
+                node(3, "Pass", mode=4, inputs=[{"name": "image", "type": "IMAGE", "link": 1}]),   # bypassed, passes node 1 through
+                node(4, "Pass", mode=4, inputs=[{"name": "image", "type": "IMAGE", "link": None}]),  # bypassed, nothing behind it
+                node(5, "Mix", outs=0, inputs=[
+                    {"name": "a", "type": "IMAGE", "link": 2},
+                    {"name": "b", "type": "IMAGE", "link": 3},
+                    {"name": "c", "type": "IMAGE", "link": 4},
+                    {"name": "d", "type": "IMAGE", "link": 5},
+                ]),
+            ],
+            "links": [[1, 1, 0, 3, 0, "IMAGE"], [2, 1, 0, 5, 0, "IMAGE"], [3, 2, 0, 5, 1, "IMAGE"],
+                      [4, 3, 0, 5, 2, "IMAGE"], [5, 4, 0, 5, 3, "IMAGE"]],
+        }
+        res = Flow.load(wf).convert_with_errors(node_info=node_info)
+        raw = getattr(res.data, "unwrap", lambda: dict(res.data))()
+        assert set(raw) == {"1", "5"}, f"unexpected nodes: {sorted(raw)}"
+        inputs = raw["5"]["inputs"]
+        assert inputs == {"a": ["1", 0], "c": ["1", 0]}, f"links to absent nodes must be dropped: {inputs!r}"
+        for nid, n in raw.items():
+            for v in n["inputs"].values():
+                assert not (isinstance(v, list) and len(v) == 2 and str(v[0]) not in raw), f"dangling link in {nid}: {v!r}"
+        dropped = [w for w in res.warnings if w.message.startswith("Dropped input")]
+        assert sorted(w.details["input"] for w in dropped) == ["b", "d"], [w.message for w in res.warnings]
+        return {
+            "input": "inputs fed by a muted node, a bypassed pass-through, and a bypassed dead end",
+            "output": json.dumps(inputs),
+            "result": "✓ like the ComfyUI editor: pass through, else drop the input",
+        }
+    _run_test(collector, stage, "4.40", "Links from muted / dead-end bypassed nodes are dropped", t_4_40)
+
+    def t_4_41():
+        node_info = {
+            "Src": {"input": {}, "output": ["IMAGE"]},
+            "ApiEdit": {
+                "input": {
+                    "required": {
+                        "prompt": ["STRING", {"default": "", "multiline": True}],
+                        "model": ["COMFY_DYNAMICCOMBO_V3", {"options": [
+                            {"key": "m1", "inputs": {"required": {
+                                "images": ["COMFY_AUTOGROW_V3", {"template": {"input": {"required": {"image": ["IMAGE", {}]}}, "names": ["image_1", "image_2"], "min": 1}}],
+                                "mask": ["MASK", {}],
+                                "resolution": ["COMBO", {"options": ["1K", "2K"]}],
+                                "count": ["INT", {"default": 1, "min": 1, "max": 10}],
+                            }}},
+                            {"key": "m2", "inputs": {"required": {"resolution": ["COMBO", {"options": ["1K"]}]}}},
+                        ]}],
+                        "seed": ["INT", {"default": 0, "min": 0, "max": 2147483647, "control_after_generate": True}],
+                    },
+                    "optional": {"system_prompt": ["STRING", {"default": "", "multiline": True}]},
+                },
+                "output": ["IMAGE"],
+            },
+        }
+        wf = {
+            "last_node_id": 2,
+            "last_link_id": 1,
+            "nodes": [
+                {"id": 1, "type": "Src", "inputs": [], "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": [1]}], "widgets_values": []},
+                {"id": 2, "type": "ApiEdit",
+                 "inputs": [{"name": "model.images.image_1", "type": "IMAGE", "link": 1},
+                            {"name": "model.images.image_2", "type": "IMAGE", "link": None}],
+                 "outputs": [],
+                 "widgets_values": ["make it night", "m1", "2K", 3, 123456, "randomize", ""]},
+            ],
+            "links": [[1, 1, 0, 2, 0, "IMAGE"]],
+        }
+        api = Flow.load(wf).convert(node_info=node_info)
+        inputs = getattr(api, "unwrap", lambda: dict(api))()["2"]["inputs"]
+        want = {
+            "prompt": "make it night", "model": "m1", "model.resolution": "2K", "model.count": 3,
+            "seed": 123456, "system_prompt": "", "model.images.image_1": ["1", 0],
+        }
+        assert inputs == want, f"dynamic combo with connection sub-inputs misaligned: {inputs!r}"
+        return {
+            "input": "option with autogrow + mask connections, then a seed with control_after_generate",
+            "output": json.dumps(inputs),
+            "result": "✓ connection sub-inputs take no widget slot; 'randomize' is not a system prompt",
+        }
+    _run_test(collector, stage, "4.41", "Dynamic combo: connection sub-inputs and control_after_generate stay aligned", t_4_41)
+
+    def t_4_42():
+        node_info = {
+            "Pose": {
+                "input": {
+                    "required": {
+                        "format": ["COMFY_DYNAMICCOMBO_V3", {"options": [
+                            {"key": "glb", "inputs": {"required": {
+                                "style": ["COMFY_DYNAMICCOMBO_V3", {"options": [
+                                    {"key": "mesh", "inputs": {"required": {}}},
+                                    {"key": "sticks", "inputs": {"required": {
+                                        "radius": ["FLOAT", {"default": 0.02, "min": 0.0, "max": 1.0}],
+                                        "hands": ["BOOLEAN", {"default": True}],
+                                    }}},
+                                ]}],
+                                "smooth": ["INT", {"default": 0, "min": 0, "max": 30}],
+                            }}},
+                        ]}],
+                        "fps": ["INT", {"default": 30, "min": 1, "max": 240}],
+                    }
+                },
+                "output": [],
+            }
+        }
+        wf = {"last_node_id": 1, "last_link_id": 0, "links": [], "nodes": [
+            {"id": 1, "type": "Pose", "inputs": [], "outputs": [], "widgets_values": ["glb", "sticks", 0.5, False, 0, 24]}
+        ]}
+        api = Flow.load(wf).convert(node_info=node_info)
+        inputs = getattr(api, "unwrap", lambda: dict(api))()["1"]["inputs"]
+        want = {"format": "glb", "format.style": "sticks", "format.style.radius": 0.5, "format.style.hands": False,
+                "format.smooth": 0, "fps": 24}
+        assert inputs == want, f"nested dynamic combo out of order: {inputs!r}"
+        assert list(inputs) == list(want), f"sub-widgets must follow their combo: {list(inputs)!r}"
+        return {"input": "dynamic combo inside a dynamic combo", "output": json.dumps(inputs), "result": "✓ depth-first order"}
+    _run_test(collector, stage, "4.42", "Nested dynamic combos expand depth-first", t_4_42)
+
+    def t_4_43():
+        node_info = {
+            "Boxes": {"input": {"required": {
+                "width": ["INT", {"default": 1024, "min": 64, "max": 16384}],
+                "editor_state": ["BOUNDING_BOXES", {"default": [], "socketless": False}],
+                "tags": ["COMBO", {"options": ["a", "b", "c"], "multiselect": True}],
+            }}, "output": []},
+        }
+        boxes = [{"x": 1, "y": 2}, {"x": 3, "y": 4}]
+        wf = {"last_node_id": 1, "last_link_id": 0, "links": [], "nodes": [
+            {"id": 1, "type": "Boxes", "inputs": [], "outputs": [], "widgets_values": [896, boxes, ["a", "c"]]}
+        ]}
+        api = Flow.load(wf).convert(node_info=node_info)
+        inputs = getattr(api, "unwrap", lambda: dict(api))()["1"]["inputs"]
+        assert inputs == {"width": 896, "editor_state": {"__value__": boxes}, "tags": {"__value__": ["a", "c"]}}, f"{inputs!r}"
+        return {"input": "widget values that are lists", "output": json.dumps(inputs),
+                "result": "✓ wrapped as {'__value__': [...]} so they are not read as links"}
+    _run_test(collector, stage, "4.43", "List-valued widget values are wrapped like the editor does", t_4_43)
+
+    def t_4_44():
+        node_info = {
+            "Gen": {"input": {"required": {
+                "model": ["COMBO", {"options": ["m-2", "m-1"]}],
+                "prompt": ["STRING", {"multiline": True}],
+                "count": ["INT", {"default": 1, "min": 1, "max": 10}],
+            }, "optional": {
+                "quality": ["COMBO", {"options": ["medium", "low"]}],
+                "note": ["STRING", {}],
+            }}, "output": []},
+        }
+        # Saved before the node gained "quality" and "note".
+        wf = {"last_node_id": 1, "last_link_id": 0, "links": [], "nodes": [
+            {"id": 1, "type": "Gen", "inputs": [], "outputs": [], "widgets_values": ["m-1", "a fox", 2]}
+        ]}
+        api = Flow.load(wf).convert(node_info=node_info)
+        inputs = getattr(api, "unwrap", lambda: dict(api))()["1"]["inputs"]
+        assert inputs == {"model": "m-1", "prompt": "a fox", "count": 2, "quality": "medium", "note": ""}, f"{inputs!r}"
+        return {"input": "workflow older than two of the node's inputs", "output": json.dumps(inputs),
+                "result": "✓ new widgets start where the editor starts them, not at null"}
+    _run_test(collector, stage, "4.44", "Widgets the workflow has no value for get the editor's initial value", t_4_44)
+
+    def t_4_45():
+        node_info = {
+            "Src": {"input": {}, "output": ["IMAGE"]},
+            "PrimInt": {"input": {"required": {"value": ["INT", {"default": 0}]}}, "output": ["INT"]},
+            "Blend": {"input": {"required": {"base": ["IMAGE", {}], "overlay": ["IMAGE", {}]}}, "output": ["IMAGE", "IMAGE"]},
+            "Sampler": {"input": {"required": {
+                "image": ["IMAGE", {}],
+                "steps": ["INT", {"default": 20, "min": 1, "max": 10000}],
+                "curve": ["CURVE", {"default": {"points": [[0, 0], [1, 1]]}, "socketless": True}],
+            }}, "output": []},
+        }
+        img = {"name": "IMAGE", "type": "IMAGE", "links": []}
+        wf = {
+            "last_node_id": 5,
+            "last_link_id": 5,
+            "nodes": [
+                {"id": 1, "type": "Src", "inputs": [], "outputs": [img], "widgets_values": []},
+                {"id": 2, "type": "Src", "inputs": [], "outputs": [img], "widgets_values": []},
+                {"id": 3, "type": "Blend", "mode": 4, "outputs": [img, img], "widgets_values": [],
+                 "inputs": [{"name": "base", "type": "IMAGE", "link": 1}, {"name": "overlay", "type": "IMAGE", "link": 2}]},
+                {"id": 4, "type": "PrimInt", "mode": 2, "inputs": [], "outputs": [{"name": "INT", "type": "INT", "links": [4]}],
+                 "widgets_values": [99]},
+                {"id": 5, "type": "Sampler", "outputs": [],
+                 "inputs": [{"name": "image", "type": "IMAGE", "link": 3},
+                            {"name": "steps", "type": "INT", "widget": {"name": "steps"}, "link": 4}],
+                 "widgets_values": [30, {"points": [[0, 0], [0.5, 0.8], [1, 1]]}]},
+            ],
+            # Sampler.image comes from the bypassed Blend's *second* output.
+            "links": [[1, 1, 0, 3, 0, "IMAGE"], [2, 2, 0, 3, 1, "IMAGE"], [3, 3, 1, 5, 0, "IMAGE"], [4, 4, 0, 5, 1, "INT"]],
+        }
+        res = Flow.load(wf).convert_with_errors(node_info=node_info)
+        inputs = getattr(res.data, "unwrap", lambda: dict(res.data))()["5"]["inputs"]
+        assert inputs["image"] == ["2", 0], f"bypass must pass the input at the output's own index: {inputs['image']!r}"
+        assert inputs["steps"] == 30, f"a widget fed by a muted node keeps its own value: {inputs.get('steps')!r}"
+        assert inputs["curve"] == {"__type__": "CURVE", "__value__": {"points": [[0, 0], [0.5, 0.8], [1, 1]]}}, f"{inputs['curve']!r}"
+        kept = [w for w in res.warnings if "own widget value" in w.message]
+        assert len(kept) == 1 and kept[0].details["input"] == "steps", [w.message for w in res.warnings]
+        return {
+            "input": "bypassed node with two IMAGE inputs (second output used); widget fed by a muted node; a CURVE widget",
+            "output": json.dumps(inputs),
+            "result": "✓ same choices as the ComfyUI editor's graphToPrompt",
+        }
+    _run_test(collector, stage, "4.45", "Bypass slot choice, widget fallback for muted sources, typed curve values", t_4_45)
+
     _print_stage_summary(collector, stage)

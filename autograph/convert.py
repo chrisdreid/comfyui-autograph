@@ -33,6 +33,13 @@ from .defaults import (
     ENV_NODE_INFO_SOURCE,
 )
 from .origin import NodeInfoOrigin
+from .connection import (
+    CONTROL_AFTER_GENERATE_CHOICES,
+    default_for_spec,
+    WIDGET_OPTION_KEYS,
+    WIDGET_TYPE_NAMES,
+    is_widget_spec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1213,18 +1220,10 @@ def normalize_node_info(
 # ---------------------------------------------------------------------------
 
 
-# Type names that render as widgets in the frontend (everything else with a
-# plain string type is a connection slot).
-_WIDGET_TYPE_NAMES = {"INT", "FLOAT", "BOOLEAN", "STRING", "COMBO", "COMFY_DYNAMICCOMBO_V3"}
-
-# Option-dict keys that only widget specs carry (legacy/custom widget types
-# like "INT:seed" or "EASY_COMBO" declare widget config instead of a
-# recognizable type name).
-_WIDGET_OPTION_KEYS = {
-    "min", "max", "step", "round", "multiline", "placeholder",
-    "dynamicPrompts", "control_after_generate", "options",
-    "image_upload", "video_upload", "audio_upload", "file_upload", "text_upload",
-}
+# Widget-vs-connection classification lives in autograph.connection so the
+# converter and the builder cannot disagree. The old names stay importable.
+_WIDGET_TYPE_NAMES = WIDGET_TYPE_NAMES
+_WIDGET_OPTION_KEYS = WIDGET_OPTION_KEYS
 
 
 def _is_dynamic_combo_spec(spec: Any) -> bool:
@@ -1269,38 +1268,9 @@ def get_widget_input_names(class_type: str, node_info: Optional[Dict[str, Any]] 
             if not isinstance(section_inputs, dict):
                 continue
             for name, spec in section_inputs.items():
-                if not isinstance(spec, list) or not spec:
-                    continue
-                head = spec[0]
-                opts = spec[1] if len(spec) >= 2 and isinstance(spec[1], dict) else {}
-                # forceInput: true → connection slot, not widget
-                if opts.get("forceInput"):
-                    continue
-                # Explicit option list (classic COMBO) → widget
-                if isinstance(head, (list, tuple)):
-                    widget_names.append(name)
-                    continue
-                # Explicit widget markers on the options dict: only widget
-                # specs declare "socketless" (true = no socket, false = widget
-                # with a socket — COLOR, CURVE, custom editor types, ...), and
-                # "widgetType" names the widget rendered for a multi-type
-                # input ("FLOAT,INT" rendered as FLOAT).
-                if "socketless" in opts or opts.get("widgetType"):
-                    widget_names.append(name)
-                    continue
-                # Plain string type: widget for widget-capable type names —
-                # V3 schemas emit plain widgets as e.g. ["BOOLEAN", {}].
-                if isinstance(head, str) and head.upper() in _WIDGET_TYPE_NAMES:
-                    widget_names.append(name)
-                    continue
-                # Legacy/custom widget types ("INT:seed", "EASY_COMBO", ...):
-                # no recognizable type name or marker, but the options dict
-                # carries widget config (a non-null default, min/max/step,
-                # options, upload flags, ...). Anything without such config —
-                # IMAGE, LATENT, COMFY_MATCHTYPE_V3, COMFY_AUTOGROW_V3,
-                # unmarked multi-types like "BOUNDING_BOX,STRING" — is a
-                # connection slot.
-                if opts.get("default") is not None or any(k in opts for k in _WIDGET_OPTION_KEYS):
+                # One shared rule (autograph.connection.is_widget_spec) decides
+                # widget vs connection for the converter and the builder.
+                if is_widget_spec(spec):
                     widget_names.append(name)
         return widget_names
 
@@ -1383,14 +1353,15 @@ def _widget_spec_for_name(class_type: str, name: str, node_info: Optional[Dict[s
 
 
 def _spec_default(spec: Any) -> Any:
-    if isinstance(spec, list) and len(spec) >= 2 and isinstance(spec[1], dict):
-        default = spec[1].get("default")
-        if default is None and _is_dynamic_combo_spec(spec):
-            options = _dyncombo_options(spec)
-            if options:
-                return options[0].get("key")
-        return default
-    return None
+    """The value a widget takes when the workflow holds none for it.
+
+    That happens when the node gained an input after the workflow was saved.
+    The ComfyUI editor then shows the widget at its initial value, which is
+    what gets queued: the declared default, else the first option of a choice
+    widget, an empty string, zero. Emitting null instead fails server
+    validation for choice widgets.
+    """
+    return default_for_spec(spec)
 
 
 def _is_int_like(v: Any) -> bool:
@@ -1407,6 +1378,24 @@ def _is_number_like(v: Any) -> bool:
     if isinstance(v, bool):
         return False
     return isinstance(v, (int, float))
+
+
+def _choice_list(spec: Any) -> Optional[List[Any]]:
+    """The options a choice widget offers (classic combo, COMBO, dynamic combo keys), else None."""
+    if not isinstance(spec, list) or not spec:
+        return None
+    head = spec[0]
+    opts = spec[1] if len(spec) >= 2 and isinstance(spec[1], dict) else {}
+    if isinstance(head, (list, tuple)):
+        return list(head)
+    if head == "COMFY_DYNAMICCOMBO_V3":
+        keys = [o.get("key") for o in _dyncombo_options(spec)]
+        return keys or None
+    if isinstance(head, str) and head.upper() == "COMBO":
+        options = opts.get("options")
+        if isinstance(options, list) and options and not opts.get("multiselect"):
+            return list(options)
+    return None
 
 
 def _fits_widget_spec(value: Any, spec: Any) -> bool:
@@ -1460,45 +1449,104 @@ def _fits_widget_spec(value: Any, spec: Any) -> bool:
     return True
 
 
-def align_widgets_values(
+def _is_unlisted_choice(value: Any, spec: Any) -> bool:
+    """True for a string sitting in a choice widget whose option list does not contain it.
+
+    That is what a model file, sampler or option looks like when the
+    node_info at hand does not list it: installed after the snapshot was taken,
+    present on another server, or renamed. It is still the value the workflow
+    asked for, so alignment keeps it (the server has the last word) instead of
+    treating the slot as misaligned and substituting a default.
+    """
+    if not isinstance(value, str):
+        return False
+    choices = _choice_list(spec)
+    if choices is None:
+        return False
+    try:
+        return value not in choices
+    except Exception:
+        return False
+
+
+# Pseudo widget name for the combo the frontend serializes after a seed-like
+# INT widget. It takes a slot in widgets_values but is not a node input.
+_CONTROL_SLOT = "\x00control_after_generate"
+_CONTROL_SPEC: List[Any] = [list(CONTROL_AFTER_GENERATE_CHOICES), {}]
+
+
+def _has_control_widget(name: str, spec: Any) -> bool:
+    """Whether the frontend follows this widget with a control_after_generate combo."""
+    if not isinstance(spec, list) or not spec:
+        return False
+    opts = spec[1] if len(spec) >= 2 and isinstance(spec[1], dict) else {}
+    if opts.get("control_after_generate"):
+        return True
+    # Older servers do not declare the flag; the frontend of that era added
+    # the control to INT widgets named seed / noise_seed.
+    head = spec[0]
+    return isinstance(head, str) and head.upper().startswith("INT") and name.rpartition(".")[2] in ("seed", "noise_seed")
+
+
+def align_widget_indices(
     class_type: str,
     widgets_values: List[Any],
     widget_names: List[str],
     *,
     node_info: Optional[Dict[str, Any]] = None,
     size_guard: int = 2000,
-) -> List[Any]:
+) -> List[Optional[int]]:
+    """For each widget name, the index of its value in ``widgets_values`` (None when absent).
+
+    ``widgets_values`` is positional and may hold entries that are not node
+    inputs (the control_after_generate combo after a seed, frontend-only
+    widgets) or lack entries, so names and values are aligned by how well each
+    value fits each widget's spec. Two things keep that from guessing:
+
+    - the control_after_generate combo is expected where the frontend puts
+      it, right after its widget, so a ``"fixed"`` can never be taken for the
+      value of a later text widget;
+    - a string in a choice widget that the option list does not contain is
+      still accepted for that widget (see ``_is_unlisted_choice``).
+    """
     n = len(widget_names)
     m = len(widgets_values)
     if n == 0:
         return []
 
-    specs = []
-    defaults = []
-    for name in widget_names:
+    # Expected slots: every widget, each followed by its control combo if it has one.
+    slots: List[Tuple[int, Any]] = []       # (index into widget_names or -1 for a control slot, spec)
+    for i, name in enumerate(widget_names):
         spec = _widget_spec_for_name(class_type, name, node_info)
-        specs.append(spec)
-        defaults.append(_spec_default(spec))
+        slots.append((i, spec))
+        if _has_control_widget(name, spec):
+            slots.append((-1, _CONTROL_SPEC))
+    k = len(slots)
+    out: List[Optional[int]] = [None] * n
 
-    if n * m > int(size_guard):
-        out = list(widgets_values[:n])
-        while len(out) < n:
-            out.append(defaults[len(out)])
+    if k * m > int(size_guard):
+        # Too large to align: positional. Use the layout that matches the count.
+        order = [i for i, _spec in slots] if m != n else list(range(n))
+        for pos, i in enumerate(order):
+            if i >= 0 and pos < m:
+                out[i] = pos
         return out
 
     skip_penalty = 1
     missing_penalty = 2
     match_score = 2
+    unlisted_choice_score = 0
     mismatch_penalty = 6
 
-    dp = [[-10**9] * (m + 1) for _ in range(n + 1)]
-    back: List[List[Optional[Tuple[int, int, str]]]] = [[None] * (m + 1) for _ in range(n + 1)]
+    dp = [[-10**9] * (m + 1) for _ in range(k + 1)]
+    back: List[List[Optional[Tuple[int, int, str]]]] = [[None] * (m + 1) for _ in range(k + 1)]
     dp[0][0] = 0
     for j in range(1, m + 1):
         dp[0][j] = dp[0][j - 1] - skip_penalty
         back[0][j] = (0, j - 1, "skip")
 
-    for i in range(1, n + 1):
+    for i in range(1, k + 1):
+        name_index, spec = slots[i - 1]
         dp[i][0] = dp[i - 1][0] - missing_penalty
         back[i][0] = (i - 1, 0, "missing")
         for j in range(1, m + 1):
@@ -1516,8 +1564,13 @@ def align_widgets_values(
                 bestb = (i - 1, j, "missing")
 
             val = widgets_values[j - 1]
-            fits = _fits_widget_spec(val, specs[i - 1])
-            v_match = dp[i - 1][j - 1] + (match_score if fits else -mismatch_penalty)
+            if _fits_widget_spec(val, spec):
+                score = match_score
+            elif name_index >= 0 and _is_unlisted_choice(val, spec):
+                score = unlisted_choice_score
+            else:
+                score = -mismatch_penalty
+            v_match = dp[i - 1][j - 1] + score
             if v_match > best:
                 best = v_match
                 bestb = (i - 1, j - 1, "match")
@@ -1525,23 +1578,82 @@ def align_widgets_values(
             dp[i][j] = best
             back[i][j] = bestb
 
-    aligned: List[Any] = [None] * n
-    i, j = n, m
+    i, j = k, m
     while i > 0 or j > 0:
         b = back[i][j]
         if b is None:
             break
         pi, pj, action = b
-        if action == "match":
-            aligned[i - 1] = widgets_values[j - 1]
-        elif action == "missing":
-            aligned[i - 1] = defaults[i - 1]
+        if action == "match" and slots[i - 1][0] >= 0:
+            out[slots[i - 1][0]] = j - 1
         i, j = pi, pj
+    return out
 
-    for k in range(n):
-        if aligned[k] is None:
-            aligned[k] = defaults[k]
+
+def align_widgets_values(
+    class_type: str,
+    widgets_values: List[Any],
+    widget_names: List[str],
+    *,
+    node_info: Optional[Dict[str, Any]] = None,
+    size_guard: int = 2000,
+) -> List[Any]:
+    """The value of each widget name, taken from ``widgets_values`` (its default when absent)."""
+    indices = align_widget_indices(
+        class_type, widgets_values, widget_names, node_info=node_info, size_guard=size_guard
+    )
+    aligned: List[Any] = []
+    for name, index in zip(widget_names, indices):
+        value = widgets_values[index] if index is not None else None
+        if value is None:
+            value = _spec_default(_widget_spec_for_name(class_type, name, node_info))
+        aligned.append(value)
     return aligned
+
+
+def expand_widget_names(
+    class_type: str,
+    widgets_values: List[Any],
+    widget_names: List[str],
+    node_info: Optional[Dict[str, Any]],
+    max_rounds: int = 4,
+) -> Tuple[List[str], List[Any], List[Optional[int]]]:
+    """Widget names with dynamic-combo sub-widgets expanded, their values and their indices.
+
+    A COMFY_DYNAMICCOMBO_V3 widget stores its selected option key, followed in
+    ``widgets_values`` by the values of that option's sub-*widgets*, which
+    become inputs named ``"<combo>.<sub>"``. An option's connection inputs
+    (images, masks, autogrow groups) have input slots instead and take no
+    place in ``widgets_values``.
+    """
+    names = list(widget_names)
+    aligned = align_widgets_values(class_type, widgets_values, names, node_info=node_info)
+    for _ in range(max_rounds):
+        selected = dict(zip(names, aligned))
+        expanded: List[str] = []
+
+        def _visit(name: str) -> None:
+            # Depth first: a nested dynamic combo's sub-widgets come right
+            # after it, before the remaining sub-widgets of its parent.
+            if name in expanded:
+                return
+            expanded.append(name)
+            spec = _widget_spec_for_name(class_type, name, node_info)
+            for option in _dyncombo_options(spec):
+                if option.get("key") == selected.get(name):
+                    for sub_name, sub_spec in _dyncombo_option_input_specs(option):
+                        if is_widget_spec(sub_spec):
+                            _visit(f"{name}.{sub_name}")
+                    break
+
+        for top_name in widget_names:
+            _visit(top_name)
+        if expanded == names:
+            break
+        names = expanded
+        aligned = align_widgets_values(class_type, widgets_values, names, node_info=node_info)
+    indices = align_widget_indices(class_type, widgets_values, names, node_info=node_info)
+    return names, aligned, indices
 
 
 def _align_widgets_with_dynamic_combos(
@@ -1554,23 +1666,9 @@ def _align_widgets_with_dynamic_combos(
     """Align widgets_values to widget names, expanding COMFY_DYNAMICCOMBO_V3
     widgets: the selected option contributes sub-widget inputs named
     "<combo>.<sub>" whose values follow the combo's key in widgets_values."""
-    names = list(widget_names)
-    aligned = align_widgets_values(class_type, widgets_values, names, node_info=node_info)
-    for _ in range(max_rounds):
-        expanded: List[str] = []
-        for name, val in zip(names, aligned):
-            expanded.append(name)
-            spec = _widget_spec_for_name(class_type, name, node_info)
-            for option in _dyncombo_options(spec):
-                if option.get("key") == val:
-                    for sub_name, _sub_spec in _dyncombo_option_input_specs(option):
-                        expanded.append(f"{name}.{sub_name}")
-                    break
-        expanded = list(dict.fromkeys(expanded))
-        if expanded == names:
-            break
-        names = expanded
-        aligned = align_widgets_values(class_type, widgets_values, names, node_info=node_info)
+    names, aligned, _indices = expand_widget_names(
+        class_type, widgets_values, widget_names, node_info, max_rounds=max_rounds
+    )
     return names, aligned
 
 
@@ -1579,9 +1677,49 @@ def _align_widgets_with_dynamic_combos(
 # ---------------------------------------------------------------------------
 
 
+def _types_connect(a: Any, b: Any) -> bool:
+    """Whether two slot types can be linked (LiteGraph's isValidConnection, in short)."""
+    if a == b:
+        return True
+    left = {t.strip().lower() for t in str(a if a not in (None, 0) else "").split(",")}
+    right = {t.strip().lower() for t in str(b if b not in (None, 0) else "").split(",")}
+    if left & {"", "*"} or right & {"", "*"}:
+        return True
+    return bool(left & right)
+
+
+def _bypass_input_index(inputs: List[Any], output_slot: int, output_type: Any, wanted_type: Any) -> int:
+    """Which input of a bypassed node stands in for its output ``output_slot`` (-1: none).
+
+    The ComfyUI editor's rule: the input at the same index as the output when
+    its type fits, else the first input of exactly the wanted type, else the
+    first input whose type fits.
+    """
+    types = [inp.get("type") if isinstance(inp, dict) else None for inp in inputs]
+    if wanted_type in ("*", "", None):
+        if not types:
+            return -1
+        return output_slot if len(types) > output_slot else 0
+    if output_slot < len(types) and _types_connect(types[output_slot], output_type) and _types_connect(types[output_slot], wanted_type):
+        return output_slot
+    for i, t in enumerate(types):
+        if t == wanted_type:
+            return i
+    for i, t in enumerate(types):
+        if _types_connect(t, output_type) and _types_connect(t, wanted_type):
+            return i
+    return -1
+
+
 def resolve_bypassed_links(
     link_id: int, link_map: Dict[int, List[Any]], node_map: Dict[str, Dict[str, Any]], current_type: str
 ) -> Tuple[int, int]:
+    """Follow a link upstream through bypassed (mode 4) nodes.
+
+    Returns the (node id, output slot) the link really comes from. When a
+    bypassed node has nothing to pass through, its own id is returned; the
+    caller drops inputs that end at a node which is not in the prompt.
+    """
     if link_id not in link_map:
         raise WorkflowConverterError(f"Link {link_id} not found in link map")
     link = link_map[link_id]
@@ -1596,21 +1734,23 @@ def resolve_bypassed_links(
         if origin_id in visited_nodes:
             break
         visited_nodes.add(origin_id)
-        parent_inputs = parent.get("inputs", [])
-        found = False
-        for _p_slot, p_inp in enumerate(parent_inputs):
-            if p_inp.get("type") == current_type:
-                p_link_id = p_inp.get("link")
-                if p_link_id is not None:
-                    if p_link_id not in link_map:
-                        break
-                    p_link = link_map[p_link_id]
-                    origin_id = p_link[1]
-                    origin_slot = p_link[2]
-                    found = True
-                    break
-        if not found:
+        parent_inputs = parent.get("inputs", []) or []
+        parent_outputs = parent.get("outputs", []) or []
+        slot = int(origin_slot) if isinstance(origin_slot, int) else 0
+        out = parent_outputs[slot] if 0 <= slot < len(parent_outputs) else None
+        output_type = out.get("type") if isinstance(out, dict) else current_type
+        index = _bypass_input_index(parent_inputs, slot, output_type, current_type)
+        if index < 0:
             break
+        p_inp = parent_inputs[index]
+        p_link_id = p_inp.get("link") if isinstance(p_inp, dict) else None
+        if p_link_id is None or p_link_id not in link_map:
+            break
+        p_link = link_map[p_link_id]
+        origin_id = p_link[1]
+        origin_slot = p_link[2]
+        # Further upstream, what is wanted is what that input takes.
+        current_type = p_inp.get("type", current_type)
     return origin_id, origin_slot
 
 
@@ -1646,6 +1786,8 @@ def workflow_to_api_format_with_errors(
     node_map: Dict[str, Dict[str, Any]] = {str(node["id"]): node for node in nodes_list if isinstance(node, dict)}
 
     output: Dict[str, Any] = {}
+    link_inputs: Dict[str, List[str]] = {}
+    widget_values_of: Dict[str, Dict[str, Any]] = {}
     processed_nodes = 0
     skipped_nodes = 0
 
@@ -1721,7 +1863,33 @@ def workflow_to_api_format_with_errors(
                 )
 
             for i in range(min(len(widget_names), len(widgets_values))):
-                inputs[widget_names[i]] = widgets_values[i]
+                # A list in the prompt means a link, so the editor wraps a
+                # widget value that is itself a list (multiselect choices,
+                # bounding boxes, ...) as {"__value__": [...]}; the server
+                # unwraps it.
+                spec_i = _widget_spec_for_name(str(class_type), widget_names[i], node_info) if use_api else None
+                if isinstance(spec_i, list) and spec_i and spec_i[0] == "CURVE" and widgets_values[i] is not None:
+                    inputs[widget_names[i]] = {"__type__": "CURVE", "__value__": widgets_values[i]}
+                elif isinstance(widgets_values[i], list):
+                    inputs[widget_names[i]] = {"__value__": widgets_values[i]}
+                else:
+                    inputs[widget_names[i]] = widgets_values[i]
+                if use_api and _is_unlisted_choice(widgets_values[i], spec_i):
+                    warnings.append(
+                        ConversionError(
+                            category=ErrorCategory.VALIDATION,
+                            severity=ErrorSeverity.WARNING,
+                            message=(
+                                f"{class_type}.{widget_names[i]}: {widgets_values[i]!r} is not among the "
+                                f"options in node_info (kept as is)"
+                            ),
+                            node_id=node_id_str,
+                            details={"class_type": class_type, "input": widget_names[i], "value": widgets_values[i]},
+                        )
+                    )
+
+            own_values = dict(inputs)       # the node's own widget values, before links replace them
+            linked_names: List[str] = []
 
             for inp in (node.get("inputs") or []):
                 if not isinstance(inp, dict):
@@ -1739,6 +1907,7 @@ def workflow_to_api_format_with_errors(
                     continue
                 try:
                     inputs[name] = _resolve_link_value(int(link_id), str(in_type))
+                    linked_names.append(name)
                 except Exception as e:
                     warnings.append(
                         ConversionError(
@@ -1757,6 +1926,8 @@ def workflow_to_api_format_with_errors(
                     api_node["_meta"] = meta
 
             output[node_id_str] = api_node
+            link_inputs[node_id_str] = linked_names
+            widget_values_of[node_id_str] = own_values
             processed_nodes += 1
 
         except NodeInfoError as e:
@@ -1788,6 +1959,39 @@ def workflow_to_api_format_with_errors(
                     message=f"Unexpected error processing node: {e}",
                     node_id=node_id_str,
                     details={"class_type": class_type},
+                )
+            )
+
+    # Inputs linked to nodes that are not part of the prompt: muted nodes,
+    # bypassed nodes with nothing to pass through, UI-only or unknown node
+    # types. The ComfyUI editor cannot resolve such a link when it queues a
+    # graph: a widget input keeps the node's own widget value, a connection
+    # input is left out. Left in, the server rejects the whole prompt for
+    # referencing a node that is not there.
+    for node_id_str, names in link_inputs.items():
+        inputs = output[node_id_str]["inputs"]
+        for name in names:
+            value = inputs.get(name)
+            if not (isinstance(value, list) and len(value) == 2 and str(value[0]) not in output):
+                continue
+            own = widget_values_of.get(node_id_str, {})
+            if name in own:
+                inputs[name] = own[name]
+                outcome = f"Input {name} uses the node's own widget value"
+            else:
+                del inputs[name]
+                outcome = f"Dropped input {name}"
+            source = node_map.get(str(value[0])) or {}
+            warnings.append(
+                ConversionError(
+                    category=ErrorCategory.NODE_PROCESSING,
+                    severity=ErrorSeverity.WARNING,
+                    message=(
+                        f"{outcome}: it is linked to node {value[0]}"
+                        f" ({source.get('type', 'unknown')}), which is not in the prompt (muted, bypassed or skipped)"
+                    ),
+                    node_id=node_id_str,
+                    details={"class_type": output[node_id_str].get("class_type"), "input": name, "source": str(value[0])},
                 )
             )
 

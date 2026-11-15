@@ -56,6 +56,7 @@ from .convert import (  # noqa: F401
     align_widgets_values,
     convert,
     convert_workflow_with_errors,
+    expand_widget_names,
     fetch_node_info,
     fetch_node_info_from_url,
     get_widget_input_names,
@@ -124,10 +125,11 @@ def _flow_widget_map(node: Dict[str, Any], flow: Any, *, _cache: Dict[str, List[
         widget_names = get_widget_input_names(class_type, node_info=node_info, use_api=True)
         _cache[class_type] = widget_names
     wv0 = node.get("widgets_values", []) or []
-    wv = align_widgets_values(class_type, list(wv0), widget_names, node_info=node_info)
+    # Dynamic-combo sub-widgets are part of the node's values ("combo.sub").
+    names, wv, _indices = expand_widget_names(class_type, list(wv0), widget_names, node_info)
     out: Dict[str, Any] = {}
-    for i in range(min(len(widget_names), len(wv))):
-        out[widget_names[i]] = wv[i]
+    for i in range(min(len(names), len(wv))):
+        out[names[i]] = wv[i]
     return out
 
 
@@ -843,9 +845,14 @@ class FlowNodeProxy(_DictMixin):
             except NodeInfoError:
                 widget_names = []
 
-            if name in widget_names:
-                wv = align_widgets_values(self.type, list(self.widgets_values or []), widget_names, node_info=node_info)
-                widget_map = {k: wv[i] for i, k in enumerate(widget_names) if i < len(wv)}
+            if name in widget_names or ("." in name and name.partition(".")[0] in widget_names):
+                # Expanded names include the sub-widgets of a dynamic combo's
+                # selected option ("resize_type.width"); aligning them too keeps
+                # a later widget from picking up one of their values.
+                names, wv, _indices = expand_widget_names(
+                    self.type, list(self.widgets_values or []), widget_names, node_info
+                )
+                widget_map = {k: wv[i] for i, k in enumerate(names) if i < len(wv)}
                 if name in widget_map:
                     val = widget_map[name]
                     if isinstance(val, dict) and not isinstance(val, DictView):
@@ -929,37 +936,26 @@ class FlowNodeProxy(_DictMixin):
                 widget_names = get_widget_input_names(self.type, node_info=node_info, use_api=True)
             except Exception:
                 widget_names = []
-            if widget_names and name in widget_names:
+            if widget_names and (name in widget_names or ("." in name and name.partition(".")[0] in widget_names)):
                 wv0 = node.get("widgets_values")
                 wv0_list = wv0 if isinstance(wv0, list) else []
-                # Use alignment to find the correct position of this widget
-                # in the original array, then update in-place to preserve
-                # values unknown to node_info (e.g. control_after_generate).
-                aligned = align_widgets_values(self.type, list(wv0_list), widget_names, node_info=node_info)
-                target_idx = widget_names.index(name)
-                old_val = aligned[target_idx] if target_idx < len(aligned) else None
-                # Find the position of old_val in the original array
-                # by tracing the alignment mapping
-                updated = False
-                if wv0_list:
-                    # Build a forward map: for each widget_name[i], which
-                    # original index does it correspond to?
-                    remaining = list(range(len(wv0_list)))
-                    idx_map: dict = {}
-                    for wi, wn in enumerate(widget_names):
-                        wval = aligned[wi] if wi < len(aligned) else None
-                        for ri, oi in enumerate(remaining):
-                            if oi < len(wv0_list) and wv0_list[oi] == wval:
-                                idx_map[wi] = oi
-                                remaining.pop(ri)
-                                break
-                    if target_idx in idx_map:
-                        wv0_list[idx_map[target_idx]] = value
-                        node["widgets_values"] = wv0_list
-                        updated = True
-                if not updated:
-                    # Fallback: replace with aligned (for newly created nodes
-                    # where widgets_values may be empty or mismatched)
+                # Alignment says which entry of the original array belongs to
+                # this widget; update that entry in place so values node_info
+                # does not describe (e.g. control_after_generate) are preserved.
+                names, aligned, indices = expand_widget_names(self.type, list(wv0_list), widget_names, node_info)
+                if name not in names:
+                    raise AttributeError(
+                        f"Node {self.id} ({self.type}) has no widget '{name}' with its current settings. "
+                        f"Widgets: {', '.join(names)}"
+                    )
+                target_idx = names.index(name)
+                raw_idx = indices[target_idx]
+                if raw_idx is not None:
+                    wv0_list[raw_idx] = value
+                    node["widgets_values"] = wv0_list
+                else:
+                    # No entry for this widget yet (newly created or short
+                    # array): rebuild from the aligned values.
                     aligned[target_idx] = value
                     node["widgets_values"] = aligned
                 return
