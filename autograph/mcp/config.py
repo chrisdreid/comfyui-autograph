@@ -15,6 +15,7 @@ from typing import Optional
 DEFAULT_MAX_INLINE_IMAGE_BYTES = 2_000_000   # ~2 MB per image inlined as base64
 DEFAULT_MAX_INLINE_IMAGES = 4                # cap on number of images inlined per call
 DEFAULT_LOCAL_FALLBACK_URL = "http://127.0.0.1:8188"
+DEFAULT_WAIT_TIMEOUT_S = 120                 # how long run_workflow / wait_for_job wait before handing back the job id
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class McpConfig:
     output_path: str
     max_inline_image_bytes: int
     max_inline_images: int
+    wait_timeout_s: int = DEFAULT_WAIT_TIMEOUT_S
 
     def resolve_server_url(self, override: Optional[str] = None) -> str:
         """Pick a ComfyUI URL: explicit arg → env-configured → localhost fallback.
@@ -61,4 +63,5 @@ def load_config() -> McpConfig:
         max_inline_images=_int_env(
             "AUTOGRAPH_MCP_MAX_INLINE_IMAGES", DEFAULT_MAX_INLINE_IMAGES
         ),
+        wait_timeout_s=_int_env("AUTOGRAPH_MCP_WAIT_TIMEOUT_S", DEFAULT_WAIT_TIMEOUT_S),
     )

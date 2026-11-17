@@ -9,9 +9,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ImageContent, TextContent
 
 from autograph.version import __version__
@@ -53,6 +53,99 @@ def _result_with_images(payload: Dict[str, Any]) -> List[Union[TextContent, Imag
 
 
 # ---------------------------------------------------------------------------
+# What a client is told when it connects
+# ---------------------------------------------------------------------------
+
+INSTRUCTIONS = """\
+Build, edit, check and run ComfyUI workflows.
+
+Start with `comfyui_status`. Then get a workflow into a session (every session has a `workflow_id`):
+- `search_templates` -> `load_template`: ComfyUI's own ready-made workflows. The quickest way to a known-good graph.
+- `load_workflow`: a file or JSON, in workspace or API format.
+- `create_workflow`: empty, or a whole graph in one call with `nodes` in ComfyUI's API format.
+
+Find nodes before using them; never guess a class_type or an input name:
+- `list_node_types(query=..., input_type=..., output_type=...)` finds node types ("what gives CONDITIONING").
+- `describe_node_type` gives each input (type, default, range, choices, widget or connection) and each output with its index.
+- `list_input_options` / `list_models` list the files a dropdown offers (checkpoints, LoRAs, uploaded images).
+
+Edit with `add_node`, `set_workflow_values`, `connect_nodes`, `disconnect_input`, `remove_node`, `set_node_mode`.
+Inputs are written as in the API format: a value, or a link `[node_id, output_index]`. `add_node` and
+`set_workflow_values` take both, so a node can be added fully wired in one call. Links are type-checked, and a
+refused change says what would fit. `inspect_workflow` shows the graph in the same notation.
+
+`validate_workflow` checks what ComfyUI checks when a job is queued (unknown node types, missing inputs, mismatched
+links, values outside a widget's choices or range) and names the node, the input and what to do.
+
+`run_workflow` validates, queues, waits and returns the images. A job that outlasts the wait returns
+`timed_out: true` with its `prompt_id`: continue with `wait_for_job`, or check with `get_job_status`. Each output has
+`as_input`, the value a loader node takes to read it back, for chaining runs. `upload_file` sends a local file to
+ComfyUI's input folder. `get_logs` shows the server log when a job fails without a clear error.
+
+Model files and custom nodes cannot be installed from here: when `validate_workflow` reports a missing model or node
+type, tell the user what to install.
+"""
+
+
+def _annotated(mcp: FastMCP, title: str, *, read_only: bool = False, destructive: bool = False,
+               idempotent: bool = False, open_world: bool = True, content: bool = False) -> Callable[[Any], Any]:
+    """``mcp.tool()`` with the hints clients use to decide what needs confirming.
+
+    ``open_world`` is False for tools that only touch the session held by this
+    server (no request to ComfyUI, no file written where the caller points).
+    ``content`` marks tools that return text and image blocks instead of one object.
+    """
+    try:
+        from mcp.types import ToolAnnotations
+
+        hints = ToolAnnotations(
+            title=title,
+            readOnlyHint=read_only,
+            destructiveHint=destructive if not read_only else False,
+            idempotentHint=idempotent or read_only,
+            openWorldHint=open_world,
+        )
+    except ImportError:                       # an older SDK without annotations
+        return mcp.tool()
+    if content:
+        # The tool returns text and image blocks, which have no output schema worth sending.
+        try:
+            return mcp.tool(annotations=hints, structured_output=False)
+        except TypeError:
+            pass
+    try:
+        return mcp.tool(annotations=hints)
+    except TypeError:
+        return mcp.tool()
+
+
+async def _in_thread(ctx: Optional[Context], fn: Callable[..., Dict[str, Any]], **kwargs: Any) -> Dict[str, Any]:
+    """Run a tool that waits on ComfyUI in a worker thread, passing its progress on to the client."""
+    import anyio
+
+    async def report(done: float, total: Optional[float], message: str) -> None:
+        if ctx is None:
+            return
+        try:
+            await ctx.report_progress(done, total, message)
+        except TypeError:
+            await ctx.report_progress(done, total)
+        except Exception:
+            pass
+
+    def on_progress(done: float, total: Optional[float], message: str) -> None:
+        try:
+            anyio.from_thread.run(report, done, total, message)
+        except Exception:
+            pass
+
+    return await anyio.to_thread.run_sync(lambda: fn(on_progress=on_progress, **kwargs))
+
+
+Workflow = Optional[Union[str, Dict[str, Any]]]
+
+
+# ---------------------------------------------------------------------------
 # Server construction
 # ---------------------------------------------------------------------------
 
@@ -64,122 +157,217 @@ def build_server(
     cfg = config or load_config()
     sessions = store or SessionStore()
 
-    mcp = FastMCP(
-        "comfyui-autograph",
-        instructions=(
-            "ComfyUI workflow workhorse. Typical loop: `load_workflow` (or `create_workflow`) -> "
-            "`inspect_workflow` -> `set_workflow_values` / `add_node` / `connect_nodes` / `merge_workflow` -> "
-            "`validate_workflow` -> `run_workflow`. Workflows live in a stateful session keyed by `workflow_id` "
-            "with auto-checkpoints to ~/.comfyui-autograph/sessions/. The `merge_workflow` tool grafts a "
-            "fragment (e.g. JSON found online) into the active workflow with auto-stitching, returning what "
-            "still needs wiring. Use `list_workflow_sources` for curated places to fetch fragments and "
-            "`search_local_workflows` to browse the local library. Generated images are returned inline "
-            "(base64) up to a per-call cap; large outputs fall back to file paths and `comfyui://` URIs."
-        ),
-    )
+    mcp = FastMCP("comfyui-autograph", instructions=INSTRUCTIONS)
+
+    def tool(title: str, **hints: Any) -> Callable[[Any], Any]:
+        return _annotated(mcp, title, **hints)
 
     # =======================================================================
-    # Server / introspection (4)
+    # Server and discovery
     # =======================================================================
 
-    @mcp.tool()
-    def comfyui_status(server_url: Optional[str] = None) -> Dict[str, Any]:
-        """Check whether a ComfyUI server is reachable and report queue depth + system stats."""
-        return _tools.comfyui_status(cfg, server_url=server_url)
+    @tool("ComfyUI status", read_only=True)
+    def comfyui_status(server_url: Optional[str] = None, refresh: bool = False) -> Dict[str, Any]:
+        """Whether ComfyUI is reachable, its version, devices and free memory, queue depth and number of node types. Call this first. `refresh=true` re-reads the node list (after custom nodes were installed)."""
+        return _tools.comfyui_status(cfg, server_url=server_url, refresh=refresh)
 
-    @mcp.tool()
+    @tool("Search node types", read_only=True)
     def list_node_types(
         query: Optional[str] = None,
         category: Optional[str] = None,
-        limit: int = 50,
+        input_type: Optional[str] = None,
+        output_type: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+        include_deprecated: bool = False,
         server_url: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """List ComfyUI node types. `query` matches class_type or display_name (substring, case-insensitive)."""
-        return _tools.list_node_types(cfg, query=query, category=category, limit=limit, server_url=server_url)
+        """Find node types on the server. All filters combine.
 
-    @mcp.tool()
-    def describe_node_type(class_type: str, server_url: Optional[str] = None) -> Dict[str, Any]:
-        """Return the full input/output/widget definition for a single node class_type."""
-        return _tools.describe_node_type(cfg, class_type=class_type, server_url=server_url)
-
-    @mcp.tool()
-    def list_models(folder: Optional[str] = None, server_url: Optional[str] = None) -> Dict[str, Any]:
-        """List models known to ComfyUI. With no folder, returns the folder index; with one (e.g. 'checkpoints', 'loras', 'vae'), returns its contents."""
-        return _tools.list_models(cfg, folder=folder, server_url=server_url)
-
-    # =======================================================================
-    # Workflow inspection / editing (4) — session-aware
-    # =======================================================================
-
-    @mcp.tool()
-    def inspect_workflow(
-        workflow: Optional[Union[str, Dict[str, Any]]] = None,
-        workflow_id: Optional[str] = None,
-        brief: bool = False,
-    ) -> Dict[str, Any]:
-        """Summarize a workflow's nodes with their input/output connectivity. `brief=True` returns a compact [{id, type, title, inputs:[{name,type,connected}], outputs:[{name,type,consumers}]}] list — fast and sufficient for most planning. Full mode (default) adds widget values and wiring details. Pass `workflow_id` for an active session, or `workflow` (path/JSON/dict) to inspect inline."""
-        return _tools.inspect_workflow(cfg, sessions, workflow=workflow, workflow_id=workflow_id, brief=brief)
-
-    @mcp.tool()
-    def convert_workflow(
-        workflow: Optional[Union[str, Dict[str, Any]]] = None,
-        workflow_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Convert a workspace workflow to ComfyUI's API format and return both result and structured errors."""
-        return _tools.convert_workflow(cfg, sessions, workflow=workflow, workflow_id=workflow_id)
-
-    @mcp.tool()
-    def validate_workflow(
-        workflow: Optional[Union[str, Dict[str, Any]]] = None,
-        workflow_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Pre-flight: run the converter and return only the structured errors and warnings."""
-        return _tools.validate_workflow(cfg, sessions, workflow=workflow, workflow_id=workflow_id)
-
-    @mcp.tool()
-    def set_workflow_values(
-        updates: List[Dict[str, Any]],
-        workflow: Optional[Union[str, Dict[str, Any]]] = None,
-        workflow_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Bulk-edit widget values on workflow nodes. Each update: `{node_id?, class_type?, title?, inputs: {name: value}}`. Operates on the active session if `workflow_id` is given."""
-        return _tools.set_workflow_values(
-            cfg, sessions, updates=updates, workflow=workflow, workflow_id=workflow_id
+        `query`: words looked for in the class name, display name, search aliases, category and description ("load image", "ksampler", "upscale").
+        `input_type` / `output_type`: nodes that take / give a connection of that type, e.g. output_type="CONDITIONING" for what can feed a sampler's `positive`, input_type="LATENT" for what a latent can go into.
+        `category`: part of a category path ("loaders", "image/upscaling").
+        Each result has `class_type`, `takes` (connection inputs as name:TYPE, `?` = optional) and `gives` (output types in index order). Best match first; `next_offset` pages. Follow with `describe_node_type` for the widgets."""
+        return _tools.list_node_types(
+            cfg, query=query, category=category, limit=limit, server_url=server_url,
+            input_type=input_type, output_type=output_type, offset=offset, include_deprecated=include_deprecated,
         )
 
+    @tool("Describe node type", read_only=True)
+    def describe_node_type(
+        class_type: Union[str, List[str]],
+        max_options: int = 25,
+        server_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Everything needed to add and wire a node type. `class_type` is one name or a list of names.
+
+        `inputs` (in the node's order): `name`, `type`, `required`, `kind` ("widget" takes a value, "connection" takes a link, "connection_group" is a growing set of connections addressed as "group.member"), and for widgets `default`, `min`/`max`/`step`, `options` (the first `max_options` of `options_total`; `list_input_options` searches the rest), `multiline`, `seed`, `upload`. A dropdown with `inputs_per_option` adds inputs named "dropdown.input" depending on the choice.
+        `outputs`: `index`, `name`, `type`; a link to an output is `[node_id, index]`.
+        An unknown name returns the closest matches."""
+        return _tools.describe_node_type(cfg, class_type=class_type, server_url=server_url, max_options=max_options)
+
+    @tool("List a dropdown's choices", read_only=True)
+    def list_input_options(
+        class_type: str,
+        input_name: str,
+        query: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+        server_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """The choices of one dropdown input, e.g. ("CheckpointLoaderSimple", "ckpt_name") or ("LoadImage", "image"). `query` filters by substring; `next_offset` pages. These are the exact strings the input accepts."""
+        return _tools.list_input_options(
+            cfg, class_type=class_type, input_name=input_name, query=query, limit=limit, offset=offset,
+            server_url=server_url,
+        )
+
+    @tool("List models", read_only=True)
+    def list_models(
+        folder: Optional[str] = None,
+        query: Optional[str] = None,
+        limit: int = 100,
+        server_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Model files installed in ComfyUI. Without `folder`: the folder names (checkpoints, loras, vae, controlnet, ...). With one: its files, filtered by `query`."""
+        return _tools.list_models(cfg, folder=folder, server_url=server_url, query=query, limit=limit)
+
     # =======================================================================
-    # Builder API (8) — all session-based
+    # Getting a workflow
     # =======================================================================
 
-    @mcp.tool()
-    def load_workflow(
-        source: Union[str, Dict[str, Any]],
-        label: Optional[str] = None,
+    @tool("Search ComfyUI templates", read_only=True)
+    def search_templates(
+        query: Optional[str] = None,
+        media_type: Optional[str] = None,
+        local_only: bool = False,
+        limit: int = 10,
+        server_url: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Load a workflow into a new session. `source` may be a file path, JSON string, or workflow dict. Returns a `workflow_id` for subsequent edits."""
+        """Search the ready-made workflows that ship with ComfyUI (text to image, image edit, video, audio, 3D, upscaling, ...). `media_type`: image, video, audio, 3d or llm. `local_only=true` leaves out templates that call paid partner APIs. Results name the models a template needs and their download size; most used first. Load one with `load_template`."""
+        return _tools.search_templates(
+            cfg, query=query, media_type=media_type, limit=limit, local_only=local_only, server_url=server_url
+        )
+
+    @tool("Load a ComfyUI template", open_world=True)
+    def load_template(name: str, label: Optional[str] = None, server_url: Optional[str] = None) -> Dict[str, Any]:
+        """Load a template (by `name` from `search_templates`) into a new session. Returns the `workflow_id`, the nodes that take the template's input files and give its outputs, and `ready_to_run` with the `problems` to fix first (typically model files that are not installed)."""
+        return _tools.load_template(cfg, sessions, name=name, label=label, server_url=server_url)
+
+    @tool("Load a workflow")
+    def load_workflow(source: Union[str, Dict[str, Any]], label: Optional[str] = None) -> Dict[str, Any]:
+        """Load a workflow into a new session and return its `workflow_id`. `source` is a file path (a workflow .json, or a PNG saved by ComfyUI with the workflow embedded), a JSON string, or the workflow object, in workspace format (as saved by the editor) or API format. Subgraphs are flattened so every node has one id, the id ComfyUI uses in errors and results."""
         return _tools.load_workflow(cfg, sessions, source=source, label=label)
 
-    @mcp.tool()
+    @tool("Create a workflow")
     def create_workflow(
+        nodes: Optional[Dict[str, Any]] = None,
         starter: Optional[str] = None,
         label: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Start a new workflow session. With `starter`, seed it from the local library (see `search_local_workflows`)."""
-        return _tools.create_workflow(cfg, sessions, starter=starter, label=label)
+        """Start a new session and return its `workflow_id`.
 
-    @mcp.tool()
+        With `nodes`, build the whole graph in one call from ComfyUI's API format:
+        {"1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "model.safetensors"}},
+         "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a cat", "clip": ["1", 1]}}}
+        where a link is [node_id, output_index]. The result says whether the graph is valid and lists every problem; fix them with `set_workflow_values` / `connect_nodes`.
+        With `starter`, begin from a library workflow (`search_local_workflows`). With neither, start empty and use `add_node`."""
+        return _tools.create_workflow(cfg, sessions, starter=starter, label=label, nodes=nodes)
+
+    @tool("List workflow sources", read_only=True, open_world=False)
+    def list_workflow_sources() -> Dict[str, Any]:
+        """Websites where ComfyUI workflows are published. Nothing is fetched here: fetch a workflow JSON yourself and pass it to `load_workflow` or `merge_workflow`."""
+        return _tools.list_workflow_sources(cfg)
+
+    @tool("Search the local workflow library", read_only=True, open_world=False)
+    def search_local_workflows(
+        query: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        limit: int = 20,
+    ) -> Dict[str, Any]:
+        """Search the local workflow library (bundled starters, ~/.comfyui-autograph/workflows, the project's own, AUTOGRAPH_MCP_LIBRARY_DIRS)."""
+        return _tools.search_local_workflows(cfg, query=query, tags=tags, limit=limit)
+
+    @tool("Load a library workflow")
+    def load_local_workflow(name: str, label: Optional[str] = None) -> Dict[str, Any]:
+        """Load a workflow from the local library (by name or filename) into a new session."""
+        return _tools.load_local_workflow(cfg, sessions, name=name, label=label)
+
+    # =======================================================================
+    # Reading and checking a workflow
+    # =======================================================================
+
+    @tool("Inspect a workflow", read_only=True, open_world=False)
+    def inspect_workflow(
+        workflow_id: Optional[str] = None,
+        workflow: Workflow = None,
+        node_ids: Optional[List[str]] = None,
+        class_type: Optional[str] = None,
+        brief: bool = False,
+    ) -> Dict[str, Any]:
+        """Read a workflow: every node with `id`, `class_type`, `inputs` by name (a value, or a link [node_id, output_index]), `outputs` (name:TYPE and the inputs each one feeds), `missing` (required inputs with nothing connected), `title`, and `mode` when bypassed or muted. `output_nodes` are the nodes that produce results.
+
+        `brief=true` leaves out widget values (links only): use it first on large workflows, then pass `node_ids` or `class_type` for the nodes of interest. Give `workflow_id`, or `workflow` (path / JSON / object) to read one without a session."""
+        return _tools.inspect_workflow(
+            cfg, sessions, workflow=workflow, workflow_id=workflow_id, brief=brief, node_ids=node_ids,
+            class_type=class_type,
+        )
+
+    @tool("Validate a workflow", read_only=True)
+    def validate_workflow(
+        workflow_id: Optional[str] = None,
+        workflow: Workflow = None,
+        server_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Check a workflow against the server before running it: unknown node types, required inputs with nothing connected, links between types that do not fit or to outputs that do not exist, values that are not among a dropdown's choices (missing model files) or outside a number's range, no output node, nodes that feed nothing.
+
+        Each entry in `errors` / `warnings` has a `code`, a `message`, the `node_id` and `input`, and what to do: `closest` (near matches), `candidates` (outputs in the graph that fit, as links), `hint`. `ok: true` means ComfyUI will accept it."""
+        return _tools.validate_workflow(
+            cfg, sessions, workflow=workflow, workflow_id=workflow_id, server_url=server_url
+        )
+
+    @tool("Convert to API format", read_only=True, open_world=False)
+    def convert_workflow(workflow_id: Optional[str] = None, workflow: Workflow = None) -> Dict[str, Any]:
+        """Convert a workspace workflow to the API format ComfyUI executes and return it as `api_workflow`, with the same `errors` / `warnings` as `validate_workflow`."""
+        return _tools.convert_workflow(cfg, sessions, workflow=workflow, workflow_id=workflow_id)
+
+    @tool("Get the workflow JSON", read_only=True, open_world=False)
+    def get_workflow(workflow_id: str, format: str = "workspace") -> Dict[str, Any]:
+        """The session's workflow as JSON: "workspace" (what the ComfyUI editor opens) or "api" (what the server executes). Large; `inspect_workflow` is the compact way to read a graph."""
+        return _tools.get_workflow(cfg, sessions, workflow_id=workflow_id, format=format)
+
+    # =======================================================================
+    # Editing
+    # =======================================================================
+
+    @tool("Add a node", open_world=False)
     def add_node(
         workflow_id: str,
         class_type: str,
         inputs: Optional[Dict[str, Any]] = None,
         title: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Append a node to the active workflow. `inputs` are widget overrides; connection inputs are made via `connect_nodes` afterwards."""
+        """Add a node. `inputs` maps input names to widget values and to links `[node_id, output_index]` from nodes already in the graph, so a node can be added fully wired:
+        add_node(workflow_id, "KSampler", {"model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0], "latent_image": ["4", 0], "seed": 7, "steps": 20})
+        Widgets left out keep their defaults. The node is not added if an input name does not exist, a value has the wrong type or is out of range, or a link's types do not fit; the error says what is valid. Returns the `node_id`, the node as `inspect_workflow` shows it, and `missing` required connections."""
         return _tools.add_node(
             cfg, sessions, workflow_id=workflow_id, class_type=class_type, inputs=inputs, title=title
         )
 
-    @mcp.tool()
+    @tool("Set inputs of existing nodes", open_world=False, idempotent=True)
+    def set_workflow_values(
+        updates: List[Dict[str, Any]],
+        workflow_id: Optional[str] = None,
+        workflow: Workflow = None,
+    ) -> Dict[str, Any]:
+        """Change inputs of nodes that exist. Each update is `{"node_id": "3", "inputs": {name: value}}`; instead of `node_id`, `class_type` or `title` selects every matching node. A value is a widget value, a link `[node_id, output_index]`, or null to disconnect. `"set_title": "..."` renames the node.
+
+        Example: [{"node_id": "6", "inputs": {"text": "a red fox"}}, {"class_type": "KSampler", "inputs": {"seed": 42, "steps": 30}}]
+        Every change is checked against the node type; `applied` reports each one, and a refused one says why and what fits (`closest`, valid `inputs`, `min`/`max`)."""
+        return _tools.set_workflow_values(
+            cfg, sessions, updates=updates, workflow=workflow, workflow_id=workflow_id
+        )
+
+    @tool("Connect two nodes", open_world=False, idempotent=True)
     def connect_nodes(
         workflow_id: str,
         from_node: str,
@@ -187,7 +375,7 @@ def build_server(
         to_input: str,
         from_output: Optional[Union[str, int]] = None,
     ) -> Dict[str, Any]:
-        """Wire `from_node.<from_output>` into `to_node.<to_input>`. If `from_output` is omitted, autograph picks the unique matching output by type."""
+        """Link an output of `from_node` to the input `to_input` of `to_node`. `from_output` is the output's index or name; left out, the one output whose type fits is used. An input holds one link: connecting replaces the previous one. The types must fit; a refusal lists the outputs and inputs that do."""
         return _tools.connect_nodes(
             cfg, sessions,
             workflow_id=workflow_id,
@@ -197,145 +385,152 @@ def build_server(
             from_output=from_output,
         )
 
-    @mcp.tool()
+    @tool("Disconnect an input", open_world=False, destructive=True, idempotent=True)
     def disconnect_input(workflow_id: str, node_id: str, input_name: str) -> Dict[str, Any]:
-        """Drop the wire feeding a specific input slot."""
+        """Remove the link feeding one input of a node."""
         return _tools.disconnect_input(
             cfg, sessions, workflow_id=workflow_id, node_id=node_id, input_name=input_name
         )
 
-    @mcp.tool()
-    def remove_node(workflow_id: str, node_id: str) -> Dict[str, Any]:
-        """Delete a node and every link touching it."""
+    @tool("Remove nodes", open_world=False, destructive=True)
+    def remove_node(workflow_id: str, node_id: Union[str, List[str]]) -> Dict[str, Any]:
+        """Delete a node (or a list of nodes) and every link touching it. `inputs_left_unconnected` lists the inputs of other nodes that lost their source."""
         return _tools.remove_node(cfg, sessions, workflow_id=workflow_id, node_id=node_id)
 
-    @mcp.tool()
+    @tool("Bypass, mute or re-enable nodes", open_world=False, idempotent=True)
+    def set_node_mode(workflow_id: str, node_ids: Union[str, List[str]], mode: str = "active") -> Dict[str, Any]:
+        """Switch nodes on or off without removing them. `mode`: "bypassed" (skipped, its input passes through to what it fed: the way to turn off a LoRA or an upscaler), "muted" (does not run, and neither does what depends on it), "active"."""
+        return _tools.set_node_mode(cfg, sessions, workflow_id=workflow_id, node_ids=node_ids, mode=mode)
+
+    @tool("Merge a workflow fragment", open_world=False)
     def merge_workflow(
         workflow_id: str,
         fragment: Union[str, Dict[str, Any]],
         auto_connect: bool = True,
     ) -> Dict[str, Any]:
-        """Graft a workflow fragment into the active session.
-
-        Renumbers the fragment's node + link IDs to avoid collisions, inserts it,
-        and (if `auto_connect=True`) tries to wire dangling inputs/outputs against
-        the existing graph by slot type when there's a unique match. Returns the
-        list of nodes added, what was auto-connected, what's still dangling with
-        candidates for the LLM to pick from, and any 'interposer' suggestions for
-        nodes that take and produce the same slot type (e.g. LoraLoader on MODEL).
-        """
+        """Add another workflow's nodes (a path, JSON or object, in workspace or API format) to the session. Its node ids are renumbered. With `auto_connect`, open inputs and outputs are wired to the existing graph where exactly one connection of the right type is possible. Returns the nodes added, what was connected, and what is still open with the candidates for each."""
         return _tools.merge_workflow(
             cfg, sessions, workflow_id=workflow_id, fragment=fragment, auto_connect=auto_connect
         )
 
-    @mcp.tool()
-    def save_workflow(workflow_id: str, path: Optional[str] = None) -> Dict[str, Any]:
-        """Persist the active workflow. With no `path`, writes to its session checkpoint location."""
-        return _tools.save_workflow(cfg, sessions, workflow_id=workflow_id, path=path)
+    @tool("Save the workflow to a file", destructive=True, idempotent=True)
+    def save_workflow(workflow_id: str, path: Optional[str] = None, format: str = "workspace") -> Dict[str, Any]:
+        """Write the session's workflow to `path` (overwriting it): "workspace" format opens in the ComfyUI editor, "api" is what the server executes. Without `path`, the session's own checkpoint file is written."""
+        return _tools.save_workflow(cfg, sessions, workflow_id=workflow_id, path=path, format=format)
 
-    @mcp.tool()
-    def get_workflow(workflow_id: str, format: str = "workspace") -> Dict[str, Any]:
-        """Return the current workflow JSON (workspace by default, or 'api' for the converted API payload)."""
-        return _tools.get_workflow(cfg, sessions, workflow_id=workflow_id, format=format)
-
-    # =======================================================================
-    # Session management (2)
-    # =======================================================================
-
-    @mcp.tool()
+    @tool("List sessions", read_only=True, open_world=False)
     def list_sessions() -> Dict[str, Any]:
-        """List active workflow sessions (workflow_id, label, source path, node count, checkpoint path)."""
+        """The workflow sessions held by this server: `workflow_id`, label, source file, node count, checkpoint file."""
         return _tools.list_sessions(cfg, sessions)
 
-    @mcp.tool()
+    @tool("Close a session", open_world=False, destructive=True, idempotent=True)
     def close_session(workflow_id: str, delete_checkpoint: bool = False) -> Dict[str, Any]:
-        """Drop a session from memory. With `delete_checkpoint=True`, also deletes its on-disk snapshot."""
+        """Drop a session from memory; `delete_checkpoint=true` also deletes its checkpoint file."""
         return _tools.close_session(
             cfg, sessions, workflow_id=workflow_id, delete_checkpoint=delete_checkpoint
         )
 
     # =======================================================================
-    # Library + sources (3)
+    # Running
     # =======================================================================
 
-    @mcp.tool()
-    def list_workflow_sources() -> Dict[str, Any]:
-        """Return a curated list of online sources where workflows live (Civitai, OpenArt, ComfyUI examples on GitHub, etc.). The MCP doesn't scrape — the LLM uses its own WebFetch on these URLs."""
-        return _tools.list_workflow_sources(cfg)
-
-    @mcp.tool()
-    def search_local_workflows(
-        query: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        limit: int = 20,
-    ) -> Dict[str, Any]:
-        """Search the local workflow library (bundled starters + ~/.comfyui-autograph/workflows + project-local + AUTOGRAPH_MCP_LIBRARY_DIRS)."""
-        return _tools.search_local_workflows(cfg, query=query, tags=tags, limit=limit)
-
-    @mcp.tool()
-    def load_local_workflow(name: str, label: Optional[str] = None) -> Dict[str, Any]:
-        """Load a library workflow (by name or filename) into a new session."""
-        return _tools.load_local_workflow(cfg, sessions, name=name, label=label)
-
-    # =======================================================================
-    # Execution (4) — session-aware
-    # =======================================================================
-
-    @mcp.tool()
-    def run_workflow(
-        workflow: Optional[Union[str, Dict[str, Any]]] = None,
+    @tool("Run a workflow", content=True)
+    async def run_workflow(
+        ctx: Context,
         workflow_id: Optional[str] = None,
+        workflow: Workflow = None,
         wait: bool = True,
+        wait_timeout: Optional[float] = None,
+        fetch_outputs: bool = True,
+        save_to: Optional[str] = None,
+        inline_images: bool = True,
+        max_inline: Optional[int] = None,
+        skip_validation: bool = False,
+        server_url: Optional[str] = None,
+    ) -> List[Union[TextContent, ImageContent]]:
+        """Validate, queue and (with `wait`) wait for a workflow, then return its outputs. Give `workflow_id`, or `workflow` (path / JSON / object).
+
+        `status` is "completed", "failed" (with `errors` naming the node), "cancelled", or still "running" / "pending" with `timed_out: true` when it outlasts `wait_timeout` seconds (default 120): the job keeps running, continue with `wait_for_job(prompt_id)`. A workflow that does not validate is not queued (`stage: "validation"`, with the same `errors` as `validate_workflow`).
+        Outputs are saved under `save_to` (default: the configured output folder); images are also returned inline up to `max_inline`. Each output has `as_input`, the value a loader node takes to read that file back. Text outputs come back in `texts`."""
+        payload = await _in_thread(
+            ctx, _tools.run_workflow, config=cfg, store=sessions,
+            workflow=workflow, workflow_id=workflow_id, wait=wait, fetch_outputs=fetch_outputs, save_to=save_to,
+            inline_images=inline_images, max_inline=max_inline, server_url=server_url,
+            wait_timeout=wait_timeout, skip_validation=skip_validation,
+        )
+        return _result_with_images(payload)
+
+    @tool("Queue a workflow")
+    def queue_workflow(
+        workflow_id: Optional[str] = None,
+        workflow: Workflow = None,
+        skip_validation: bool = False,
+        server_url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Validate and queue a workflow without waiting. Returns the `prompt_id` for `wait_for_job`, `get_job_status`, `cancel_job` and `fetch_outputs`."""
+        return _tools.queue_workflow(
+            cfg, sessions, workflow=workflow, workflow_id=workflow_id, server_url=server_url,
+            skip_validation=skip_validation,
+        )
+
+    @tool("Wait for a job", read_only=True, content=True)
+    async def wait_for_job(
+        ctx: Context,
+        prompt_id: str,
+        timeout: Optional[float] = None,
         fetch_outputs: bool = True,
         save_to: Optional[str] = None,
         inline_images: bool = True,
         max_inline: Optional[int] = None,
         server_url: Optional[str] = None,
     ) -> List[Union[TextContent, ImageContent]]:
-        """Submit a workflow to ComfyUI. Pass `workflow_id` for an active session, or `workflow` (path/JSON/dict) to submit inline. With `wait=True` (default), block until the run finishes and return outputs. Submission failures and execution errors are returned as structured `errors` arrays."""
-        payload = _tools.run_workflow(
-            cfg, sessions,
-            workflow=workflow,
-            workflow_id=workflow_id,
-            wait=wait,
-            fetch_outputs=fetch_outputs,
-            save_to=save_to,
-            inline_images=inline_images,
-            max_inline=max_inline,
+        """Wait up to `timeout` seconds (default 120) for a queued or running job and return what `run_workflow` returns: its `status`, and its outputs once it has completed. `timed_out: true` means it is still going; call again."""
+        payload = await _in_thread(
+            ctx, _tools.wait_for_job, config=cfg, prompt_id=prompt_id, timeout=timeout,
+            fetch_outputs=fetch_outputs, save_to=save_to, inline_images=inline_images, max_inline=max_inline,
             server_url=server_url,
         )
         return _result_with_images(payload)
 
-    @mcp.tool()
-    def queue_workflow(
-        workflow: Optional[Union[str, Dict[str, Any]]] = None,
-        workflow_id: Optional[str] = None,
-        server_url: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Fire-and-forget submission. Returns the prompt_id; use `fetch_outputs` later."""
-        return _tools.queue_workflow(
-            cfg, sessions, workflow=workflow, workflow_id=workflow_id, server_url=server_url
-        )
+    @tool("Job status", read_only=True)
+    def get_job_status(prompt_id: Optional[str] = None, server_url: Optional[str] = None) -> Dict[str, Any]:
+        """Where a job is, without waiting: "pending" (with its queue position), "running", "completed" (with its outputs), "failed" (with the error and the node it happened in), "cancelled". Without `prompt_id`: what is running and waiting now, and the most recent jobs."""
+        return _tools.get_job_status(cfg, prompt_id=prompt_id, server_url=server_url)
 
-    @mcp.tool()
+    @tool("Cancel a job", destructive=True, idempotent=True)
+    def cancel_job(prompt_id: str, server_url: Optional[str] = None) -> Dict[str, Any]:
+        """Cancel one job: removed from the queue if it is waiting, interrupted if it is running."""
+        return _tools.cancel_job(cfg, prompt_id=prompt_id, server_url=server_url)
+
+    @tool("Interrupt the running job", destructive=True, idempotent=True)
+    def interrupt(server_url: Optional[str] = None) -> Dict[str, Any]:
+        """Stop whatever ComfyUI is running now. To cancel a specific job, including one still waiting, use `cancel_job`."""
+        return _tools.interrupt(cfg, server_url=server_url)
+
+    @tool("Recent jobs", read_only=True)
     def get_history(
         prompt_id: Optional[str] = None,
         limit: int = 10,
         server_url: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Fetch ComfyUI run history. With a prompt_id, returns just that job; otherwise the most recent jobs."""
+        """The most recent jobs (newest first) with their status and output files; with `prompt_id`, the same as `get_job_status`. The full record of a job is the resource comfyui://history/{prompt_id}."""
         return _tools.get_history(cfg, prompt_id=prompt_id, limit=limit, server_url=server_url)
 
-    @mcp.tool()
-    def interrupt(server_url: Optional[str] = None) -> Dict[str, Any]:
-        """Cancel the currently-running ComfyUI job."""
-        return _tools.interrupt(cfg, server_url=server_url)
+    @tool("Free memory", destructive=True, idempotent=True)
+    def free_memory(unload_models: bool = True, server_url: Optional[str] = None) -> Dict[str, Any]:
+        """Have ComfyUI unload its models and free memory, e.g. after an out-of-memory failure or before a large model. The next run loads its models again."""
+        return _tools.free_memory(cfg, unload_models=unload_models, server_url=server_url)
+
+    @tool("Server log", read_only=True)
+    def get_logs(lines: int = 60, query: Optional[str] = None, server_url: Optional[str] = None) -> Dict[str, Any]:
+        """The last `lines` lines of the ComfyUI server log, optionally only those containing `query`. For failures that come without a clear error (a custom node that did not load, out of memory)."""
+        return _tools.get_logs(cfg, lines=lines, query=query, server_url=server_url)
 
     # =======================================================================
-    # Files / outputs (3)
+    # Files and outputs
     # =======================================================================
 
-    @mcp.tool()
+    @tool("Upload a file to ComfyUI")
     def upload_file(
         local_path: str,
         accept: Optional[Union[str, List[str]]] = None,
@@ -343,11 +538,9 @@ def build_server(
         overwrite: bool = False,
         server_url: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Upload a local file (or directory of matching files) to ComfyUI's input store.
+        """Upload a local file (or the matching files of a directory) to ComfyUI's input folder. Each uploaded file has `as_input`, the value to give a loader node (LoadImage.image, LoadAudio.audio, LoadVideo.file, ...).
 
-        `accept` may be a kind ('image'/'audio'/'video'/'text'/'archive'/'model'),
-        a MIME pattern ('image/*'), an exact MIME type, an extension, or a list of those.
-        """
+        `accept` limits what is sent: a kind ("image", "audio", "video", "text", "archive", "model"), a MIME pattern ("image/*"), an extension, or a list of those."""
         return _tools.upload_file(
             cfg,
             local_path=local_path,
@@ -357,8 +550,8 @@ def build_server(
             server_url=server_url,
         )
 
-    @mcp.tool()
-    def fetch_outputs(
+    @tool("Download a job's outputs", content=True)
+    async def fetch_outputs(
         prompt_id: str,
         save_to: Optional[str] = None,
         kinds: Optional[Union[str, List[str]]] = None,
@@ -366,8 +559,10 @@ def build_server(
         max_inline: Optional[int] = None,
         server_url: Optional[str] = None,
     ) -> List[Union[TextContent, ImageContent]]:
-        """Retrieve outputs for a previous prompt_id. Same image-cap policy as run_workflow."""
-        payload = _tools.fetch_outputs(
+        """Download the outputs of a finished job to `save_to` and return images inline (same limits as `run_workflow`). `kinds` limits it to e.g. "images"."""
+        import anyio
+
+        payload = await anyio.to_thread.run_sync(lambda: _tools.fetch_outputs(
             cfg,
             prompt_id=prompt_id,
             save_to=save_to,
@@ -375,12 +570,12 @@ def build_server(
             inline_images=inline_images,
             max_inline=max_inline,
             server_url=server_url,
-        )
+        ))
         return _result_with_images(payload)
 
-    @mcp.tool()
+    @tool("List a job's outputs", read_only=True)
     def list_outputs(prompt_id: str, server_url: Optional[str] = None) -> Dict[str, Any]:
-        """Enumerate the output files of a past job without downloading them."""
+        """The files and texts a job produced, without downloading them. Each file has `as_input` (the value a loader node takes to read it back) and a `resource_uri`."""
         return _tools.list_outputs(cfg, prompt_id=prompt_id, server_url=server_url)
 
     # =======================================================================

@@ -2121,6 +2121,9 @@ class Flow(dict):
         disable_AUTOGRAPH_meta: bool = False,
         apply_AUTOGRAPH_meta: Optional[bool] = None,  # backwards-compat alias (disable wins)
     ) -> ConvertResult:
+        # Like convert(): the node_info attached to this flow is used unless the caller gives one.
+        if node_info is None and server_url is None:
+            node_info = getattr(self, "node_info", None)
         r = convert_workflow_with_errors(
             workflow_data=self,
             node_info=node_info,

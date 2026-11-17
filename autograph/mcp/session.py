@@ -92,7 +92,8 @@ class SessionStore:
             try:
                 return self._sessions[workflow_id]
             except KeyError as exc:
-                raise KeyError(
+                # LookupError, not KeyError: str(KeyError) wraps the message in quotes.
+                raise LookupError(
                     f"No active workflow session with id {workflow_id!r}. "
                     f"Use `list_sessions` to see live ids, or `load_workflow`/`create_workflow` to start one."
                 ) from exc

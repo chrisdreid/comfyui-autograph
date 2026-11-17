@@ -5,10 +5,13 @@ MCP-capable IDE — Claude Desktop, Claude Code, Cursor, VS Code (Copilot,
 Continue, Cline), Zed, and others — can drive ComfyUI through natural-language
 tool calls.
 
-It is a **workhorse for back-end workflow editing**: load a workflow file,
-inspect the node graph, edit widgets, add and connect new nodes, graft in
-fragments the LLM finds online, validate, and submit — all without opening the
-GUI. Generated images come back inline so the LLM can actually see them.
+It is built for **making and changing workflows**, not only running them: find
+node types by what they do or by the types they take and give, build a graph
+node by node or all at once, read it back by input name, edit it, check it
+against the server before queueing, run it, and feed the result into the next
+run, all without opening the GUI. Every edit is checked as it is made, and a
+refused one says what would fit. Generated images come back inline so the
+assistant can see them.
 
 The MCP server lives inside the `autograph` package as a subpackage
 (`autograph.mcp`), but it is **opt-in**: importing `autograph` does not import
@@ -60,95 +63,211 @@ If `AUTOGRAPH_COMFYUI_SERVER_URL` is unset the MCP falls back to
 
 ---
 
-## How it works: stateful sessions
+## How it works
 
-The MCP keeps an in-memory store of **live workflow sessions**, each keyed by
-a stable `workflow_id`. The typical flow:
+### Sessions
 
-1. **Open** — `load_workflow(source=...)` (or `create_workflow()` /
-   `load_local_workflow(name=...)`) returns a `workflow_id`.
-2. **Inspect/edit** — every editing tool (`add_node`, `connect_nodes`,
-   `set_workflow_values`, `merge_workflow`, …) takes that `workflow_id` and
-   mutates the live workflow.
-3. **Auto-checkpoint** — every mutation auto-writes a snapshot to
-   `~/.comfyui-autograph/sessions/<workflow_id>.json`. If your IDE restarts
-   mid-edit the workflow is still on disk.
-4. **Run** — `run_workflow(workflow_id=...)` submits to ComfyUI, waits, and
-   returns inline images plus structured errors when things go wrong.
-5. **Save / close** — `save_workflow(workflow_id, path=...)` writes a clean
-   copy. `close_session(workflow_id, delete_checkpoint=True)` cleans up.
+The server keeps **workflow sessions**, each with a `workflow_id`:
 
-Read-only tools (`inspect_workflow`, `validate_workflow`, `convert_workflow`)
-also accept an inline `workflow` argument (file path, JSON string, or dict)
-when you don't want to start a session.
+1. **Open**: `load_template`, `load_workflow`, `create_workflow` or
+   `load_local_workflow` returns a `workflow_id`.
+2. **Read and edit**: `inspect_workflow`, `add_node`, `set_workflow_values`,
+   `connect_nodes`, ... take that `workflow_id` and work on the live graph.
+3. **Checkpoint**: every edit writes
+   `~/.comfyui-autograph/sessions/<workflow_id>.json`, a workspace file that
+   opens in ComfyUI. If the IDE restarts, the work is on disk.
+4. **Run**: `run_workflow(workflow_id=...)` checks, queues, waits and returns
+   the images.
+5. **Save / close**: `save_workflow(workflow_id, path=...)`,
+   `close_session(workflow_id, delete_checkpoint=True)`.
+
+`inspect_workflow`, `validate_workflow`, `convert_workflow`, `run_workflow` and
+`queue_workflow` also take an inline `workflow` (file path, JSON string or
+object, in workspace or API format) when no session is needed.
+
+### One notation for reading and writing
+
+Inputs are read and written by name, the way ComfyUI's API format writes them:
+a value, or a link `[node_id, output_index]`.
+
+```json
+{"id": "5", "class_type": "KSampler",
+ "inputs": {"seed": 7, "steps": 20, "model": ["1", 0], "positive": ["2", 0]},
+ "outputs": ["LATENT -> 6.samples"],
+ "missing": ["negative:CONDITIONING", "latent_image:LATENT"]}
+```
+
+That is what `inspect_workflow` returns for a node, and the same `inputs`
+object is what `add_node`, `set_workflow_values` and `create_workflow(nodes=...)`
+accept. A node can be added fully wired in one call:
+
+```
+add_node(workflow_id, "KSampler",
+         {"model": ["1", 0], "positive": ["2", 0], "negative": ["3", 0],
+          "latent_image": ["4", 0], "seed": 7, "steps": 20})
+```
+
+and a whole graph can be built in one call from an API-format prompt, which
+is the format assistants know best. The node ids given are the ids in the
+session:
+
+```
+create_workflow(nodes={
+  "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "sd_xl_base_1.0.safetensors"}},
+  "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "a cat", "clip": ["1", 1]}},
+  ...})
+```
+
+The session holds a workspace graph, so what was built this way saves as a
+file the ComfyUI editor opens, laid out left to right.
+
+Workflows with **subgraphs** are flattened when they are loaded. Every node
+then has one id, and it is the id ComfyUI uses in its errors and results, so an
+error on "node 507" is a node the assistant can see and edit.
+
+### The node list
+
+`list_node_types`, `describe_node_type`, `validate_workflow` and the editing
+tools all work from the server's node list (`/object_info`). It is fetched
+once, kept for five minutes, and re-read after an upload or when a value is
+missing from a list that may have changed. A copy is saved to
+`~/.comfyui-autograph/node_info_cache.json`; when ComfyUI cannot be reached
+that copy is used (results say `from_cache`), so a workflow can still be
+built and checked offline.
 
 ---
 
 ## Tools
 
-### Server / introspection
+### Server and discovery
 
 | Tool | What it does |
 | --- | --- |
-| `comfyui_status` | Reachable? Queue depth + system stats. |
-| `list_node_types(query?, category?, limit=50)` | Search the node catalog (substring on class_type / display_name). |
-| `describe_node_type(class_type)` | Full input / output / widget spec for one class. |
-| `list_models(folder?)` | Checkpoints / loras / vae / etc. via ComfyUI's `/models`. |
+| `comfyui_status(refresh?)` | Reachable? Version, devices and free memory, queue depth, number of node types. |
+| `list_node_types(query?, category?, input_type?, output_type?, limit=20, offset?)` | Search node types by words (class name, display name, search aliases, category, description) and by what they take or give: `output_type="CONDITIONING"` finds what can feed a sampler's `positive`. Each result lists its connection inputs and output types. |
+| `describe_node_type(class_type, max_options=25)` | One node type or a list of them: every input with type, widget or connection, default, range and choices; every output with its index. Unknown names return the closest matches. |
+| `list_input_options(class_type, input_name, query?, limit=50, offset?)` | The choices of one dropdown (checkpoints, samplers, uploaded images), searchable. |
+| `list_models(folder?, query?, limit=100)` | Model folders, or the files in one. |
 
-### Inspection / editing
-
-| Tool | What it does |
-| --- | --- |
-| `inspect_workflow(workflow? | workflow_id?)` | Compact node summary with wired vs free inputs. |
-| `convert_workflow(workflow? | workflow_id?)` | Workspace → API format with structured errors. |
-| `validate_workflow(workflow? | workflow_id?)` | Pre-flight error / warning report. |
-| `set_workflow_values(updates, workflow? | workflow_id?)` | Bulk widget edits by `node_id`, `class_type`, or `title`. |
-
-### Builder API (session-only)
+### Getting a workflow
 
 | Tool | What it does |
 | --- | --- |
-| `load_workflow(source, label?)` | Open a path / JSON / dict into a new session. |
-| `create_workflow(starter?, label?)` | New empty session, optionally seeded from the local library. |
-| `add_node(workflow_id, class_type, inputs?, title?)` | Append a node; `inputs` are widget overrides. |
-| `connect_nodes(workflow_id, from_node, to_node, to_input, from_output?)` | Wire two nodes; auto-resolves output by type if omitted. |
-| `disconnect_input(workflow_id, node_id, input_name)` | Drop the wire feeding one input. |
-| `remove_node(workflow_id, node_id)` | Delete a node and every link touching it. |
-| `merge_workflow(workflow_id, fragment, auto_connect=True)` | Graft a fragment with renumbering + auto-stitch. |
-| `save_workflow(workflow_id, path?)` | Write to disk (or to the session checkpoint if `path` is omitted). |
-| `get_workflow(workflow_id, format="workspace"|"api")` | Dump the current JSON. |
-
-### Session management
-
-| Tool | What it does |
-| --- | --- |
-| `list_sessions()` | All live workflow ids with metadata. |
-| `close_session(workflow_id, delete_checkpoint=False)` | Drop from memory; optionally delete the snapshot. |
-
-### Library + sources
-
-| Tool | What it does |
-| --- | --- |
-| `list_workflow_sources()` | Curated URL list (Civitai, OpenArt, ComfyUI examples on GitHub, …). The MCP doesn't scrape — your assistant uses its own WebFetch on these. |
+| `search_templates(query?, media_type?, local_only?, limit=10)` | Search the workflows that ship with ComfyUI (served by the server itself). Results name the models a template needs and their download size, and flag templates that call paid partner APIs. |
+| `load_template(name, label?)` | Open a template in a new session. Says which nodes take its input files and give its outputs, and whether it is ready to run or what is missing (model files, custom nodes). |
+| `load_workflow(source, label?)` | Open a file path, JSON string or object: workspace or API format, or a PNG saved by ComfyUI with the workflow embedded. |
+| `create_workflow(nodes?, starter?, label?)` | New session: empty, from a library starter, or a whole graph from an API-format `nodes` object. |
 | `search_local_workflows(query?, tags?, limit=20)` | Search the local library (bundled starters + `~/.comfyui-autograph/workflows` + project-local + `AUTOGRAPH_MCP_LIBRARY_DIRS`). |
-| `load_local_workflow(name, label?)` | Open a library workflow into a new session. |
+| `load_local_workflow(name, label?)` | Open a library workflow in a new session. |
+| `list_workflow_sources()` | Websites where workflows are published. Nothing is fetched by the server; the assistant fetches a JSON itself and passes it to `load_workflow` or `merge_workflow`. |
 
-### Execution
-
-| Tool | What it does |
-| --- | --- |
-| `run_workflow(workflow? | workflow_id?, wait=True, fetch_outputs=True, save_to?, inline_images=True, max_inline?)` | Submit, optionally wait, return inline images. Submission and execution failures come back as structured `errors` arrays. |
-| `queue_workflow(...)` | Fire-and-forget; returns `prompt_id`. |
-| `get_history(prompt_id?, limit=10)` | Recent runs (or one by id). |
-| `interrupt()` | Cancel current job. |
-
-### Files / outputs
+### Reading and checking
 
 | Tool | What it does |
 | --- | --- |
-| `upload_file(local_path, accept?, subfolder?, overwrite=False)` | Push files into ComfyUI's input store. `accept` accepts kinds (`image`/`audio`/`video`/`text`/`archive`/`model`), MIME patterns, exact MIME types, or extensions. |
-| `fetch_outputs(prompt_id, save_to?, kinds?, inline_images=True, max_inline?)` | Retrieve outputs of a past job. |
-| `list_outputs(prompt_id)` | Enumerate outputs without downloading. |
+| `inspect_workflow(workflow_id? \| workflow?, node_ids?, class_type?, brief?)` | Every node with its inputs by name (values and links), outputs and what they feed, missing required connections, title, bypassed/muted. `brief` leaves out widget values; `node_ids` / `class_type` narrow it down. |
+| `validate_workflow(workflow_id? \| workflow?)` | Pre-flight against the server. See [Validation](#validation). |
+| `convert_workflow(workflow_id? \| workflow?)` | The API-format prompt, with the same errors and warnings. |
+| `get_workflow(workflow_id, format="workspace"\|"api")` | The full JSON. |
+
+### Editing (session only)
+
+| Tool | What it does |
+| --- | --- |
+| `add_node(workflow_id, class_type, inputs?, title?)` | Add a node with widget values and links in one call. Refused, with the valid names and ranges, if an input does not exist, a value has the wrong type or is out of range, or a link's types do not fit. |
+| `set_workflow_values(updates, workflow_id? \| workflow?)` | Change inputs of existing nodes selected by `node_id`, `class_type` or `title`: values, links, `null` to disconnect, `set_title` to rename. Each change is checked and reported separately. |
+| `connect_nodes(workflow_id, from_node, to_node, to_input, from_output?)` | Link two nodes. Type-checked; with no `from_output`, the one output that fits is used. |
+| `disconnect_input(workflow_id, node_id, input_name)` | Remove the link feeding one input. |
+| `remove_node(workflow_id, node_id)` | Delete one node or a list, with their links; reports the inputs left unconnected. |
+| `set_node_mode(workflow_id, node_ids, mode)` | `bypassed` (skipped, input passes through), `muted`, or `active`. |
+| `merge_workflow(workflow_id, fragment, auto_connect=True)` | Graft another workflow (workspace or API format) into the session. |
+| `save_workflow(workflow_id, path?, format="workspace"\|"api")` | Write to disk. |
+| `list_sessions()` / `close_session(workflow_id, delete_checkpoint=False)` | Session housekeeping. |
+
+### Running
+
+| Tool | What it does |
+| --- | --- |
+| `run_workflow(workflow_id? \| workflow?, wait=True, wait_timeout?, fetch_outputs=True, save_to?, inline_images=True, max_inline?, skip_validation?)` | Validate, queue, wait, return outputs. See [Running](#running-and-long-jobs). |
+| `queue_workflow(workflow_id? \| workflow?, skip_validation?)` | Validate and queue; returns the `prompt_id`. |
+| `wait_for_job(prompt_id, timeout?, ...)` | Wait for a queued or running job and return what `run_workflow` returns. |
+| `get_job_status(prompt_id?)` | `pending` (with queue position), `running`, `completed` (with outputs), `failed` (with the node and error), `cancelled`. Without an id: the queue and the most recent jobs. |
+| `cancel_job(prompt_id)` | Remove a waiting job from the queue, or interrupt it if it is running. |
+| `interrupt()` | Stop whatever is running now. |
+| `get_history(prompt_id?, limit=10)` | Recent jobs, newest first, with status and output files. |
+| `free_memory(unload_models=True)` | Have ComfyUI unload models and free memory. |
+| `get_logs(lines=60, query?)` | The tail of the ComfyUI server log. |
+
+### Files and outputs
+
+| Tool | What it does |
+| --- | --- |
+| `upload_file(local_path, accept?, subfolder?, overwrite=False)` | Send files to ComfyUI's input folder. Each has `as_input`, the value for a loader node. `accept` takes kinds (`image`/`audio`/`video`/`text`/`archive`/`model`), MIME patterns, exact MIME types, or extensions. |
+| `fetch_outputs(prompt_id, save_to?, kinds?, inline_images=True, max_inline?)` | Download the outputs of a finished job. |
+| `list_outputs(prompt_id)` | List them without downloading. Each file has `as_input` and a `comfyui://` resource URI. |
+
+Every tool carries MCP annotations (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`, `openWorldHint`), so a client can let searches and
+inspections through and ask before a file is overwritten or a job is cancelled.
+
+---
+
+## Validation
+
+`validate_workflow` checks what ComfyUI checks when a job is queued, before
+queueing it, and says what to do about each problem. It was compared with
+ComfyUI 0.45's own validator on the 678 templates that ship with it: the same
+verdict on every one.
+
+| `code` | Meaning | Comes with |
+| --- | --- | --- |
+| `unknown_node_type` | The server has no such node type. | `closest` names |
+| `missing_input` | A required input has nothing connected. | `candidates`: outputs in the graph that fit, as links |
+| `type_mismatch` | A link joins types that do not connect. | `expected`, `got`, `candidates` |
+| `bad_output_index` / `dangling_link` | A link to an output or node that does not exist. | the node's `outputs` |
+| `value_not_in_list` / `no_options` | A value that is not among a dropdown's choices: usually a model or input file that is not installed. | `closest`, `options_total` |
+| `out_of_range` / `wrong_type` | A number outside `min`/`max`, or text where a number belongs. | `min`, `max` |
+| `value_on_connection` | A value where only a link will do. | `candidates` |
+| `no_output_node` | Nothing saves or previews a result. | |
+| `unused_nodes` (warning) | Nodes that feed no output and will not run. | `node_ids` |
+| `unknown_input` (warning) | An input name the node does not have; ComfyUI ignores it. | `closest` |
+
+Problems on nodes that feed no output are warnings, as they do not stop the
+rest. Links follow the ComfyUI editor's rule: equal types in any case, comma
+lists that share a member, wildcards.
+
+The editing tools apply the same checks as they go, so most mistakes are
+refused at the call that makes them, with the valid names, the range, or the
+outputs that would fit.
+
+---
+
+## Running and long jobs
+
+`run_workflow` does four things: checks the workflow, queues it, waits, and
+fetches the outputs.
+
+* **Not valid**: nothing is queued. The result has `ok: false`,
+  `stage: "validation"` and the same `errors` as `validate_workflow`. Problems
+  with a value alone (a file missing from a list, a number out of range) are
+  left for ComfyUI to judge, since a node may check its own inputs; if ComfyUI
+  refuses the job its errors come back (`stage: "submit"`) together with the
+  near matches found here.
+* **Completed**: `status: "completed"`, `outputs` (saved under `save_to`,
+  images also inline), `texts` for text outputs, `duration_s`.
+* **Failed while running**: `status: "failed"` and `errors` naming the node,
+  the exception and the last lines of the traceback.
+* **Still going**: after `wait_timeout` seconds (default 120,
+  `AUTOGRAPH_MCP_WAIT_TIMEOUT_S`) the call returns
+  `timed_out: true` with the `prompt_id` and the current `status` instead of
+  failing. The job keeps running: `wait_for_job(prompt_id)` continues waiting,
+  `get_job_status` checks once, `cancel_job` stops it. While waiting, progress
+  notifications are sent, so clients that reset their own timeout on progress
+  keep the call open.
+
+Each output file has **`as_input`** (for example `"cat_00001_.png [output]"`):
+the value a loader node takes to read that file back. Feeding one run's result
+into the next is `add_node(..., "LoadImage", {"image": as_input})`.
 
 ---
 
@@ -229,12 +348,15 @@ discoverable on the next call to `search_local_workflows`.
 
 ## Prompts
 
-* `text_to_image(prompt, negative?, model?, steps?, seed?)` — guided
-  text-to-image conversation that walks the LLM through inspect → set values →
-  validate → run.
-* `diagnose_workflow()` — walk through validation errors and propose fixes.
-* `vibe_build_workflow(goal)` — end-to-end build template: load or start →
-  search the library → graft fragments → run.
+* `text_to_image(prompt, negative?, model?, steps?, seed?)`: find or build a
+  text-to-image workflow, set it up, validate, run.
+* `diagnose_workflow()`: go through `validate_workflow`'s errors code by code
+  and fix what can be fixed.
+* `vibe_build_workflow(goal)`: the full loop: start from a template or from
+  scratch, look nodes up, edit, validate, run, chain.
+
+The server also sends `instructions` when a client connects: a short version
+of this page that tells the assistant which tool to reach for at each step.
 
 ---
 
@@ -247,6 +369,7 @@ discoverable on the next call to `search_local_workflows`.
 | `AUTOGRAPH_OUTPUT_PATH` | `./` | Where to save fetched files |
 | `AUTOGRAPH_MCP_MAX_INLINE_IMAGE_BYTES` | `2000000` | Per-image inline cap (bytes) |
 | `AUTOGRAPH_MCP_MAX_INLINE_IMAGES` | `4` | Max images returned inline per call |
+| `AUTOGRAPH_MCP_WAIT_TIMEOUT_S` | `120` | How long `run_workflow` / `wait_for_job` wait before returning the job id |
 | `AUTOGRAPH_MCP_SESSION_DIR` | `~/.comfyui-autograph/sessions` | Where session checkpoints land |
 | `AUTOGRAPH_MCP_LIBRARY_DIRS` | _(unset)_ | Colon-separated extra workflow library dirs |
 
@@ -267,47 +390,43 @@ entirely (useful for grid renders).
 
 ---
 
-## Error feedback
-
-`run_workflow` and `queue_workflow` parse two kinds of failure into actionable
-JSON:
-
-* **Submission failures** (HTTP 400 from `/prompt`) — the body's `error` and
-  `node_errors` are flattened into a list of
-  `{node_id, class_type, error_type, message, details?}`.
-* **Execution failures** (status messages on the history entry) — likewise
-  flattened so the LLM can name the offending node and propose a fix.
-
-The successful case returns `ok: true`; failures return `ok: false` with the
-`errors` array populated.
-
----
-
-## A vibe-build walkthrough
+## A walkthrough
 
 User: *"Take `flow.json`, add a LoRA stage, and render with seed 42."*
 
-LLM (rough sequence of tool calls):
+1. `comfyui_status`: the server is up.
+2. `load_workflow(source="flow.json")` returns `wf_xxxx`.
+3. `inspect_workflow(workflow_id="wf_xxxx", brief=true)`: the wiring. The
+   checkpoint loader is node 4; its MODEL goes to the sampler (node 3) and its
+   CLIP to the two text encoders (6 and 7).
+4. `list_node_types(query="lora")` finds `LoraLoader`;
+   `describe_node_type("LoraLoader")` gives its inputs (`model`, `clip`,
+   `lora_name`, `strength_model`, `strength_clip`) and outputs (0 MODEL, 1 CLIP);
+   `list_models(folder="loras")` shows what is installed.
+5. One call adds the LoRA, wired to the checkpoint:
+   `add_node("wf_xxxx", "LoraLoader", {"model": ["4", 0], "clip": ["4", 1], "lora_name": "detail.safetensors", "strength_model": 0.8})`
+   returns node 10.
+6. One call reroutes the consumers and sets the seed:
+   `set_workflow_values("wf_xxxx", [{"node_id": "3", "inputs": {"model": ["10", 0], "seed": 42}}, {"class_type": "CLIPTextEncode", "inputs": {"clip": ["10", 1]}}])`.
+7. `validate_workflow("wf_xxxx")`: `ok: true`.
+8. `run_workflow("wf_xxxx")`: the image comes back inline.
+9. `save_workflow("wf_xxxx", path="flow.lora.json")`.
 
-1. `comfyui_status` — verify server.
-2. `load_workflow(source="flow.json")` → gets `wf_xxxx`.
-3. `inspect_workflow(workflow_id="wf_xxxx")` — sees the existing graph.
-4. `list_models(folder="loras")` — confirms what LoRAs are installed.
-5. `list_node_types(query="lora")` → finds `LoraLoader`.
-6. `describe_node_type("LoraLoader")` — confirms `MODEL`, `CLIP` in/out and
-   `lora_name`, `strength_model`, `strength_clip` widgets.
-7. `add_node(workflow_id="wf_xxxx", class_type="LoraLoader", inputs={...})`.
-8. The LoraLoader is an interposer (MODEL in / MODEL out). The LLM uses
-   `disconnect_input` on the existing KSampler's `model` input, then two
-   `connect_nodes` calls to thread the LoRA between the checkpoint loader and
-   the sampler.
-9. `set_workflow_values(workflow_id="wf_xxxx", updates=[{"class_type":"KSampler","inputs":{"seed":42}}])`.
-10. `validate_workflow(workflow_id="wf_xxxx")` — clean.
-11. `run_workflow(workflow_id="wf_xxxx", wait=True, fetch_outputs=True)` — image lands inline.
-12. `save_workflow(workflow_id="wf_xxxx", path="flow.lora.json")`.
+If a step is wrong (a misspelled input, a link to the wrong output, a LoRA
+that is not installed), the call that made the mistake says so and names what
+would fit, so the assistant corrects it on the next call instead of finding
+out when the job fails.
 
-If step 11 returns `ok: false`, the LLM uses the structured `errors` to fix
-and retry without the user having to dig through ComfyUI's logs.
+---
+
+## What this server does not do
+
+It builds, edits, checks and runs workflows. It does not download models,
+install custom nodes, or start and stop ComfyUI; when a workflow needs a model
+or a node type that is missing, the tools say which, and the user installs it.
+Comfy's own MCP server ([`comfy-mcp`](https://github.com/Comfy-Org/comfy-mcp))
+covers those jobs through `comfy-cli`, and the two can be connected side by
+side. Hosted generation and Comfy Cloud accounts are outside its scope too.
 
 ---
 
