@@ -22,7 +22,7 @@ No external dependencies are required — the library is pure stdlib Python.
 python examples/unittests/main.py --non-interactive --no-browser
 
 # Run a specific stage only
-python examples/unittests/main.py --stage 8 --non-interactive --no-browser
+python examples/unittests/main.py --phase 8 --non-interactive --no-browser
 ```
 
 What to expect:

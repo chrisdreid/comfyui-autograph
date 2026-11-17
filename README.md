@@ -11,7 +11,7 @@ $$  __$$ |$$ |  $$ |  $$ |$$\ $$ |  $$ |$$ |  $$ |$$ |     $$  __$$ |$$ |  $$ |$
                                         $$\   $$ |                   $$ |                
                                         \$$$$$$  |                   $$ |                
                                          \______/                    \__|                
-ComfyUI                                                                      version: 2.3.0
+ComfyUI                                                                      version: 2.4.0
 ```
 
 [![PyPI version](https://img.shields.io/pypi/v/comfyui-autograph?color=blue)](https://pypi.org/project/comfyui-autograph/)
@@ -274,6 +274,11 @@ flow.save("my-workflow.json")
 - `node.inputs` / `node.outputs` — dict-like views: `[]`, `pop()`, `del`, `keys/values/items`
 - `flow.nodes.KSampler` returns the same `NodeRef` as `flow.add_node()`
 - `.status()` on any view gives a full ANSI-colored connection table
+- Widget inputs take links too: `steps_node >> ks.inputs.steps` or `ks.connect("steps", steps_node)` gives the widget its input slot
+- Inputs that only exist by name are addressed by that name:
+  - dynamic-combo sub-widgets: `flow.add_node("ResizeImageMaskNode", **{"resize_type": "scale dimensions", "resize_type.width": 512})`
+  - autogrow members: `math.connect("values.b", other)`; the group grows as you connect
+- A workflow built this way converts to the same API payload you would get from the ComfyUI editor, and an API payload rebuilt with `add_node` / `connect` converts back to itself
 
 ## Load from PNG (extract embedded workflow)
 
