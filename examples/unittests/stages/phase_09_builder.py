@@ -1270,5 +1270,45 @@ def run(collector: ResultCollector, **kwargs) -> None:
                 "result": "✓ the builder can express what the converter emits"}
     _run_test(collector, stage, "9.48", "API prompt → builder → API prompt is the identity", t_9_48)
 
+    def t_9_49():
+        flow = Flow.create(node_info=V3_NODE_INFO)
+        flow.add_node("Src")
+        flow.add_node("PrimInt", value=3)
+        sampler = flow.add_node("Sampler")
+        # nodes[1] is the second node in the list (id 2); the node with id 1 is nodes.by_id(1).
+        assert flow.nodes[1].addr == "2" and flow.nodes.by_id(1).addr == "1" and flow.nodes.by_id("3").addr == sampler.addr
+        # Nodes looked up later can be wired and edited like the ones add_node() returned.
+        flow.nodes.by_id(3).connect("steps", flow.nodes.by_id(2), 0)
+        flow.nodes[2].seed = 11
+        api = _api(flow)
+        assert api["3"]["inputs"]["steps"] == ["2", 0] and api["3"]["inputs"]["seed"] == 11, api["3"]
+        flow.nodes.by_id(3).disconnect("steps")
+        assert _api(flow)["3"]["inputs"]["steps"] == 20
+        try:
+            flow.nodes.by_id(99)
+            raise AssertionError("an unknown id must raise")
+        except KeyError:
+            pass
+        return {"input": "flow.nodes.by_id(3).connect('steps', flow.nodes.by_id(2), 0)", "output": "linked, edited, unlinked",
+                "result": "✓ nodes found by id or index can be wired"}
+    _run_test(collector, stage, "9.49", "nodes.by_id() and nodes[i] return wirable nodes", t_9_49)
+
+    def t_9_50():
+        import os
+        flow = Flow.create(node_info=V3_NODE_INFO)
+        flow.add_node("PrimInt", value=3)
+        saved = {k: os.environ.pop(k, None) for k in ("AUTOGRAPH_COMFYUI_SERVER_URL", "AUTOGRAPH_NODE_INFO_SOURCE")}
+        try:
+            result = flow.convert_with_errors()
+        finally:
+            for key, value in saved.items():
+                if value is not None:
+                    os.environ[key] = value
+        assert result.ok and not result.errors, [e.message for e in result.errors]
+        assert json.loads(result.data.to_json())["1"]["inputs"] == {"value": 3}
+        return {"input": "Flow.create(node_info=...).convert_with_errors()", "output": "converted with the flow's node_info",
+                "result": "✓ same as convert(): no server or environment needed"}
+    _run_test(collector, stage, "9.50", "convert_with_errors() uses the flow's own node_info", t_9_50)
+
     _print_stage_summary(collector, stage)
 

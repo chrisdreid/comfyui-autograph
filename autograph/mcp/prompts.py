@@ -15,29 +15,43 @@ Goal:
   Steps:     {steps}
   Seed:      {seed}
 
-Workflow plan:
-  1. Call `comfyui_status` to confirm the server is reachable and learn its URL.
-  2. If the user supplied a workflow path or you have one cached, call `inspect_workflow`
-     on it. Otherwise call `list_node_types(query="checkpoint")` and `list_models("checkpoints")`
-     to plan the workflow and confirm the model is available.
-  3. Use `set_workflow_values` to update CLIPTextEncode (positive/negative), the chosen
-     KSampler (`seed`, `steps`), and CheckpointLoaderSimple (`ckpt_name`) values.
-  4. Call `validate_workflow` and stop with a clear summary if there are errors.
-  5. Call `run_workflow` with `wait=True, fetch_outputs=True, inline_images=True`.
-  6. Show the user the returned image(s) and the saved file paths.
+Plan:
+  1. `comfyui_status`: confirm the server is reachable.
+  2. Get a workflow into a session:
+     - `search_templates(query="text to image", local_only=true)` and `load_template(name)` for a ready-made graph.
+       `load_template` says which model files the template needs and whether they are installed.
+     - Or, if the user gave a workflow file, `load_workflow(source=path)`.
+     - Or build one with `create_workflow(nodes=...)`: a loader, two text encoders, an empty latent, a sampler,
+       a decoder and a save node. Look each node up with `describe_node_type` first.
+  3. Model: "{model}". If it is "auto", pick an installed one: `list_models(folder="checkpoints")` (or the folder the
+     loader in the workflow reads from; `list_input_options(class_type, input_name)` gives the exact choices).
+  4. `inspect_workflow(workflow_id)` to find the nodes, then one `set_workflow_values` call for the positive and
+     negative text, the sampler's `seed` and `steps`, and the model.
+  5. `validate_workflow(workflow_id)`. Fix what it reports; if a model file is missing, tell the user which.
+  6. `run_workflow(workflow_id)`. If it returns `timed_out: true`, continue with `wait_for_job(prompt_id)`.
+  7. Show the image(s) and the saved file paths.
 """
 
 
 DIAGNOSE_WORKFLOW_TEMPLATE = """\
-Diagnose a ComfyUI workflow by walking through autograph's structured errors.
+Find out why a ComfyUI workflow does not run, and fix what can be fixed.
 
-Workflow plan:
-  1. Call `validate_workflow` on the user's workflow. Group results by severity.
-  2. For each error/warning, name the offending node (id + class_type) and explain the
-     fix in one or two sentences.
-  3. If a fix can be applied automatically (a missing widget value, a typo'd model name,
-     a wrong connection), propose `set_workflow_values` patches the user can run.
-  4. Re-run `validate_workflow` after applying any proposed fixes and confirm clean.
+Plan:
+  1. `load_workflow(source=...)` (or use the `workflow_id` already open), then `validate_workflow(workflow_id)`.
+  2. Go through `errors` by `code`:
+     - `unknown_node_type`: `closest` holds near matches. If none fits, the node comes from a custom node that is
+       not installed: say which, do not substitute silently.
+     - `missing_input`: `candidates` are outputs in the graph that fit; connect one with `connect_nodes`, or add
+       the missing node (`list_node_types(output_type=...)`).
+     - `type_mismatch`, `bad_output_index`, `dangling_link`: reconnect to an output listed in `candidates`.
+     - `value_not_in_list`, `no_options`: a model or input file that is not on the server. `closest` and
+       `list_input_options` show what is; if nothing fits, tell the user which file to install.
+     - `out_of_range`, `wrong_type`: set a value inside `min`/`max` with `set_workflow_values`.
+     - `no_output_node`: add a save or preview node.
+  3. Apply the fixes, then `validate_workflow` again until `ok` is true.
+  4. If it validates but fails when run, `run_workflow` returns the failing node and the error; `get_logs` has the
+     server's side of it.
+  5. Summarize what was wrong, what you changed, and what only the user can fix (missing models, custom nodes).
 """
 
 
@@ -62,30 +76,38 @@ def diagnose_workflow() -> str:
 
 
 VIBE_BUILD_TEMPLATE = """\
-Vibe-build a ComfyUI workflow end-to-end without using the GUI.
+Build a ComfyUI workflow end to end, without the editor.
 
 Goal:
   {goal}
 
-Workflow plan:
-  1. Confirm the server is reachable: `comfyui_status`. Note the URL.
-  2. Decide where to start:
-     a. If the user has a workflow file, call `load_workflow(source=...)` and remember the returned `workflow_id`.
-     b. Otherwise call `search_local_workflows(query=...)` and `load_local_workflow(name)` to start from a known-good
-        starter, OR `create_workflow()` to build from scratch.
-  3. Read the current graph: `inspect_workflow(workflow_id=...)`. Note class_types, free vs wired inputs, and titles.
-  4. Resolve any unknown nodes: `describe_node_type(class_type)` to learn input/output/widget shapes.
+Plan:
+  1. `comfyui_status`: confirm the server is reachable and see what it runs on.
+  2. Choose a starting point:
+     a. `search_templates(query=...)` -> `load_template(name)`: ComfyUI's own workflows. Prefer this when one is
+        close to the goal; adapt it instead of starting from nothing.
+     b. A workflow the user has: `load_workflow(source=path or JSON)`.
+     c. From scratch: plan the graph, look up every node (step 3), then `create_workflow(nodes=...)` with the whole
+        graph in API format, or `create_workflow()` and `add_node` one at a time.
+  3. Look nodes up, never guess them:
+     - `list_node_types(query=...)` to find a node by what it does; `list_node_types(output_type="X")` for what
+       can feed an input of type X; `list_node_types(input_type="X")` for what an output of type X can go into.
+     - `describe_node_type([...])` for exact input names, types, defaults, ranges and choices, and output indexes.
+     - `list_models(folder)` / `list_input_options(class_type, input_name)` for the files a loader offers.
+  4. Read the graph: `inspect_workflow(workflow_id, brief=true)` for the wiring, then `node_ids=[...]` or
+     `class_type=...` for the values of the nodes you will change.
   5. Edit:
-     a. For widget tweaks (seed, prompt text, model name): `set_workflow_values(workflow_id, updates=[...])`.
-     b. To add capability: prefer `merge_workflow(workflow_id, fragment=...)` if you can find a workflow snippet
-        (online via WebFetch on a `list_workflow_sources` URL, or in `search_local_workflows`). Otherwise build
-        node-by-node with `add_node` + `connect_nodes`.
-     c. To remove or rewire: `remove_node` / `disconnect_input` / `connect_nodes`.
-  6. After every structural change, call `validate_workflow(workflow_id)`. Stop and explain if there are errors.
-  7. Render: `run_workflow(workflow_id, wait=True, fetch_outputs=True)`. If the result has `ok: false`, the `errors`
-     array names the offending node — fix and retry.
-  8. Show the user the inline image(s) and saved file paths. If they like it, suggest `save_workflow(workflow_id, path)`
-     so the design lands on disk.
+     - values and links: `set_workflow_values(workflow_id, updates=[{{"node_id": ..., "inputs": {{...}}}}])`;
+     - new nodes: `add_node(workflow_id, class_type, inputs)` with links `[node_id, output_index]` in `inputs`;
+     - `connect_nodes`, `disconnect_input`, `remove_node`; `set_node_mode(..., "bypassed")` to switch a step off;
+     - `merge_workflow(workflow_id, fragment)` to bring in part of another workflow.
+     A refused edit says what would fit; use that rather than retrying variations.
+  6. `validate_workflow(workflow_id)` after structural changes; fix every error it lists.
+  7. `run_workflow(workflow_id)`. On `status: "failed"` the `errors` name the node; fix and run again. On
+     `timed_out: true` continue with `wait_for_job(prompt_id)`.
+  8. To build on a result, use an output's `as_input` as the value of a loader node in the next run.
+  9. Show the result and the saved paths, and offer `save_workflow(workflow_id, path)` so the user can open the
+     graph in ComfyUI.
 """
 
 

@@ -3643,22 +3643,42 @@ class FlowTreeNodesView:
         proxies = self._flowtree._flow.nodes.find(**kwargs)
         return NodeSet.from_flow_find(self._flowtree, proxies, set_path="nodes.find(...)")
 
+    def _ref_at(self, idx: int, dotpath: str) -> NodeRef:
+        """NodeRef for the node at list position ``idx``, able to connect / disconnect."""
+        flow = self._flowtree._flow
+        n = flow.get("nodes", [])[idx]
+        addr = str(n.get("id", idx))
+        proxy = _legacy.FlowNodeProxy(n, idx, flow)
+        object.__setattr__(proxy, "_AUTOGRAPH_addr", addr)
+        ref = NodeRef(proxy, kind="flow", addr=addr, group=None, index=None, dotpath=dotpath, dictpath=["nodes", idx])
+        # Without the flow, connect() / disconnect() / >> have nothing to edit.
+        object.__setattr__(ref, "_flow", self._flowtree)
+        return ref
+
+    def by_id(self, node_id: Union[str, int]) -> NodeRef:
+        """The top-level node with this id (``nodes[n]`` is a list position first, an id second).
+
+        The NodeRef can be edited and wired like one returned by ``Flow.add_node()``.
+        """
+        nodes = self._flowtree._flow.get("nodes", [])
+        want = str(node_id)
+        if isinstance(nodes, list):
+            for idx, n in enumerate(nodes):
+                if isinstance(n, dict) and str(n.get("id")) == want:
+                    return self._ref_at(idx, f"nodes.by_id({node_id!r})")
+        raise KeyError(node_id)
+
     def __getitem__(self, key: Any) -> NodeRef:
         flow = self._flowtree._flow
         nodes = flow.get("nodes", [])
         if isinstance(key, int):
             if isinstance(nodes, list) and 0 <= key < len(nodes) and isinstance(nodes[key], dict):
-                n = nodes[key]
-                proxy = _legacy.FlowNodeProxy(n, key, flow)
-                object.__setattr__(proxy, "_AUTOGRAPH_addr", str(n.get("id", key)))
-                return NodeRef(proxy, kind="flow", addr=str(n.get("id", key)), group=None, index=None, dotpath=f"nodes[{key}]", dictpath=["nodes", key])
+                return self._ref_at(key, f"nodes[{key}]")
             # treat as node id lookup (top-level only)
             if isinstance(nodes, list):
                 for idx, n in enumerate(nodes):
                     if isinstance(n, dict) and n.get("id") == key:
-                        proxy = _legacy.FlowNodeProxy(n, idx, flow)
-                        object.__setattr__(proxy, "_AUTOGRAPH_addr", str(key))
-                        return NodeRef(proxy, kind="flow", addr=str(key), group=None, index=None, dotpath=f"nodes[{key}]", dictpath=["nodes", idx])
+                        return self._ref_at(idx, f"nodes[{key}]")
             raise KeyError(key)
         if isinstance(key, str):
             # comfy path (supports subgraphs)

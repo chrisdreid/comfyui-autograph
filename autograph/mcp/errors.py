@@ -41,10 +41,14 @@ def parse_prompt_error(exc: BaseException) -> List[Dict[str, Any]]:
         try:
             body_text = exc.read().decode("utf-8")
         except Exception:
-            # The body may already have been consumed in autograph's wrapper, in
-            # which case the message string carries the inlined body.
-            msg = str(exc)
-            if ":" in msg:
+            body_text = ""
+        if not body_text.strip():
+            # autograph's http_json has already read the body and re-raised with
+            # it appended to the reason ("Bad Request: {...}").
+            msg = str(getattr(exc, "msg", "") or exc)
+            if "{" in msg:
+                body_text = msg[msg.index("{"):]
+            elif ":" in msg:
                 body_text = msg.split(":", 1)[-1].strip()
         return parse_prompt_error_body(body_text, default_status=exc.code)
 

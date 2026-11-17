@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-11-17
+
+The MCP server, reworked so an assistant can build a workflow from nothing, not only tweak one that exists.
+
+### Fixed
+- **MCP: node search returned nothing** — `list_node_types` tested each node_info entry with `isinstance(v, dict)`, which is never true for the views a `NodeInfo` hands out, so every query and every category came back empty.
+- **MCP: `describe_node_type` failed** — it returned those views, which the MCP layer cannot serialize (`Unable to serialize unknown type: DictView`).
+- **MCP: a new workflow could not be built** — `create_workflow` made a flow without node_info, so the first `add_node` failed with `Flow has no node_info`. Sessions are now created with the server's node list.
+- **MCP: `connect_nodes`, `disconnect_input` and `set_workflow_values` never found their node** — the lookup iterated `flow.nodes`, which yields path strings, so `connect_nodes` and `disconnect_input` raised `No node with id ...`, and `set_workflow_values` matched no node by `node_id`, `class_type` or `title` and returned an empty `applied` list without an error.
+- **MCP: `validate_workflow` validated nothing** — it only ran the converter, so a graph with unconnected required inputs, links between unrelated types or a model that is not installed was reported `ok`.
+- **MCP: `/prompt` errors came back as "HTTP 400 with empty body"** — the error body had already been read by `http_json`; the parser now reads it from the re-raised error, so node errors are reported.
+- **MCP: `run_workflow` reported success for a job that was still running** — once the library's 60-second wait ran out it returned `ok: true` with an empty `outputs` list.
+- **MCP: `inspect_workflow` showed widget values without names** — a bare `widgets_values` list, which also contains entries that are not inputs (the seed's `control_after_generate`).
+- **`Flow.convert_with_errors()` ignored the flow's own node_info** — unlike `convert()`, it only looked at its arguments and the environment, so a flow created with `node_info=` failed with "Missing node_info source" (or fetched the node list from the server again on every call).
+- **Nodes looked up from `flow.nodes` could not be wired** — `flow.nodes[i]` returned a NodeRef without its flow, so `connect()` / `disconnect()` raised "This NodeRef has no flow reference".
+
+### Added
+- **`flow.nodes.by_id(node_id)`** — the node with that id, editable and wirable like one returned by `add_node()`. (`flow.nodes[n]` is a list position first and an id second.)
+- **MCP: a searchable node catalog** — `list_node_types` searches class name, display name, search aliases, category and description, best match first, and filters by `input_type` / `output_type` ("what gives CONDITIONING", "what takes a LATENT"). Each result lists its connection inputs and output types. `describe_node_type` returns a normalized view of one node type or several: every input with its type, whether it is a widget or a connection, default, range, choices (truncated, with the total), seed / multiline / upload flags and the inputs each dynamic-combo option adds; every output with its index. Unknown names return the closest matches. `list_input_options` searches the choices of one dropdown.
+- **MCP: inputs by name, in API notation** — `inspect_workflow` shows each node's inputs by name as a value or a link `[node_id, output_index]`, its outputs with what they feed, and its missing required connections. `add_node` and `set_workflow_values` accept the same notation, so a node can be added fully wired in one call and a link changed like a value.
+- **MCP: `create_workflow(nodes=...)`** — build a whole graph in one call from an API-format prompt, keeping its node ids. `load_workflow` and `merge_workflow` accept API format too, and `load_workflow` reads a PNG with an embedded workflow.
+- **MCP: edits are checked as they are made** — unknown input names, wrong value types, numbers out of range and links between types that do not connect (ComfyUI's editor rule) are refused at the call, with the valid names, the range, or the outputs that fit. A value for an input that only takes a connection is held by a primitive node. Changing a dynamic combo's choice swaps its sub-inputs.
+- **MCP: a real pre-flight** — `validate_workflow` reports unknown node types, missing required inputs, mismatched and dangling links, values that are not among a dropdown's choices or outside a range, graphs without an output and nodes that feed nothing, each with a `code`, the node and input, and what would fit (`closest`, `candidates`, `hint`). Checked against ComfyUI 0.45's validator on its 678 bundled templates: the same verdict on every one.
+- **MCP: templates** — `search_templates` and `load_template` open the workflows that ship with ComfyUI, with the models each needs, its input and output nodes, and what is missing before it can run.
+- **MCP: jobs** — `run_workflow` validates first, reports progress while it waits and returns `timed_out: true` with the `prompt_id` instead of failing when a job outlasts `wait_timeout`; `wait_for_job`, `get_job_status` (queue position, outputs, the failing node) and `cancel_job` (waiting or running) follow it up. Outputs carry `as_input`, the value a loader node takes to read the file back, and text outputs are returned.
+- **MCP: `set_node_mode`** (bypass / mute), **`free_memory`**, **`get_logs`**; `remove_node` takes a list and reports the inputs it left unconnected; `save_workflow(format="api")`.
+- **MCP: tool annotations and instructions** — every tool carries `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`, and the server's `instructions` and prompts describe the find → build → validate → run loop.
+- `AUTOGRAPH_MCP_WAIT_TIMEOUT_S` (default 120).
+
+### Changed
+- **MCP: subgraphs are flattened on load** — every node in a session has one id, the id ComfyUI uses in its errors and results.
+- **MCP: answers are compact** — `comfyui_status`, `list_models`, `get_history` and `inspect_workflow` return what an assistant needs instead of raw server payloads; the full history of a job remains available as the `comfyui://history/{prompt_id}` resource.
+- **MCP: the node list is fetched once** — kept for five minutes, re-read after an upload or when a file list looks stale, with the copy on disk as the fallback when the server is down. Tools that wait on ComfyUI run off the event loop.
+- **MCP: default page sizes** — `list_node_types` returns 20 results by default (was 50) and has `offset`.
+
 ## [2.4.0] - 2026-11-17
 
 ### Fixed

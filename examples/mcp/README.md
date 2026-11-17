@@ -32,6 +32,7 @@ The server reads autograph's existing environment variables:
 | `AUTOGRAPH_OUTPUT_PATH` | `./` | Where to save fetched files |
 | `AUTOGRAPH_MCP_MAX_INLINE_IMAGE_BYTES` | `2000000` | Per-image inline cap (bytes) |
 | `AUTOGRAPH_MCP_MAX_INLINE_IMAGES` | `4` | Max images returned inline per call |
+| `AUTOGRAPH_MCP_WAIT_TIMEOUT_S` | `120` | How long `run_workflow` / `wait_for_job` wait before returning the job id |
 
 If `AUTOGRAPH_COMFYUI_SERVER_URL` is unset the MCP falls back to
 `http://127.0.0.1:8188`, so a default local ComfyUI just works.
@@ -50,39 +51,52 @@ If `AUTOGRAPH_COMFYUI_SERVER_URL` is unset the MCP falls back to
 Every snippet uses the canonical `uvx` command. If you prefer a pip install,
 swap the `command`/`args` for `"command": "comfyui-autograph-mcp", "args": []`.
 
-## Available tools (29)
+## Available tools (38)
 
-The MCP is a back-end **workhorse for editing and running** ComfyUI workflows.
-Workflows live in stateful sessions (`workflow_id`) with auto-checkpoints to
-`~/.comfyui-autograph/sessions/`. See
+The server is for **building, editing, checking and running** ComfyUI
+workflows. Workflows live in sessions (`workflow_id`) with checkpoints in
+`~/.comfyui-autograph/sessions/`. Inputs are read and written by name, as a
+value or a link `[node_id, output_index]`. See
 [`docs/mcp.md`](../../docs/mcp.md) for the full reference.
 
-**Server / introspection (4):** `comfyui_status`, `list_node_types`,
-`describe_node_type`, `list_models`.
+**Server and discovery (5):** `comfyui_status`, `list_node_types`,
+`describe_node_type`, `list_input_options`, `list_models`.
 
-**Inspection / editing (4):** `inspect_workflow`, `convert_workflow`,
-`validate_workflow`, `set_workflow_values`.
+**Getting a workflow (7):** `search_templates`, `load_template`,
+`load_workflow`, `create_workflow`, `search_local_workflows`,
+`load_local_workflow`, `list_workflow_sources`.
 
-**Builder API (9):** `load_workflow`, `create_workflow`, `add_node`,
-`connect_nodes`, `disconnect_input`, `remove_node`, `merge_workflow`,
-`save_workflow`, `get_workflow`.
+**Reading and checking (4):** `inspect_workflow`, `validate_workflow`,
+`convert_workflow`, `get_workflow`.
 
-**Sessions (2):** `list_sessions`, `close_session`.
+**Editing (10):** `add_node`, `set_workflow_values`, `connect_nodes`,
+`disconnect_input`, `remove_node`, `set_node_mode`, `merge_workflow`,
+`save_workflow`, `list_sessions`, `close_session`.
 
-**Library + sources (3):** `list_workflow_sources`, `search_local_workflows`,
-`load_local_workflow`.
+**Running (9):** `run_workflow`, `queue_workflow`, `wait_for_job`,
+`get_job_status`, `cancel_job`, `interrupt`, `get_history`, `free_memory`,
+`get_logs`.
 
-**Execution (4):** `run_workflow`, `queue_workflow`, `get_history`, `interrupt`.
-
-**Files / outputs (3):** `upload_file`, `fetch_outputs`, `list_outputs`.
+**Files and outputs (3):** `upload_file`, `fetch_outputs`, `list_outputs`.
 
 Plus three resources (`comfyui://node-info`, `comfyui://history/{prompt_id}`,
 `comfyui://outputs/{prompt_id}/{filename}`) and three prompts
 (`text_to_image`, `diagnose_workflow`, `vibe_build_workflow`).
 
-The `merge_workflow` tool grafts a workflow snippet (e.g. JSON the assistant
-fetched online) into the active session, renumbering ids and auto-stitching
-unique slot-type matches against the existing graph.
+What to expect from it:
+
+* **Node search by type.** `list_node_types(output_type="CONDITIONING")`
+  answers "what can I plug into this input".
+* **Edits are checked as they are made.** A misspelled input, a number out of
+  range or a link between the wrong types is refused at that call, with the
+  valid names, the range, or the outputs that fit.
+* **A real pre-flight.** `validate_workflow` reports what ComfyUI would refuse
+  (missing inputs, mismatched links, missing model files, unknown node types)
+  with what to do about each.
+* **Long jobs do not fail the call.** `run_workflow` returns `timed_out: true`
+  and the `prompt_id` when a job outlasts the wait; `wait_for_job` picks it up.
+* **Templates.** `search_templates` / `load_template` open the workflows that
+  ship with ComfyUI and say which models they still need.
 
 ## Verify it works
 
