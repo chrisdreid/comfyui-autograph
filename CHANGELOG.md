@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.4.0] - 2026-11-17
 
 ### Fixed
 - **Choice values missing from node_info were nulled** — widget alignment treated a string that is not in a choice widget's option list as a misaligned slot and substituted the default (or `null`). Converting with a node_info snapshot older than a model download, or taken on another server, silently turned `ckpt_name` / `unet_name` / `lora_name` / `sampler_name` into `null`, and the server then reported `'None' not in list` instead of the name the workflow asked for. Such values are now kept (the server has the last word) and listed in `ConversionResult.warnings`.
@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Builder no longer re-serializes node_info** — `add_node()`, `NodeInfo.<ClassType>`, and every attribute access or `dir()` on a flow node round-tripped the whole node_info through JSON (tens of milliseconds per call with a real server's node list). node_info is now read in place.
 - `align_widgets_values()` is built on the new `align_widget_indices()`, which returns the position of each widget's value; `expand_widget_names()` returns names, values and positions with dynamic-combo sub-widgets included.
+
+### Added
+- **`autograph.connection.is_widget_spec()`** — the single rule for "is this input a widget", shared by the converter and the builder. Alongside it: `is_queue_time_spec()`, `resolve_input_spec()` (looks up dotted names such as `resize_type.width` and autogrow members such as `images.image0`), `default_for_spec()`, `dynamic_combo_options()`, `option_input_specs()`, `autogrow_member_names()` and `slot_type_for_spec()`.
+- **`autograph.convert.align_widget_indices()` and `expand_widget_names()`** — where each widget's value sits in `widgets_values`, with dynamic-combo sub-widgets included.
+- **Conversion warnings** — `ConversionResult.warnings` now also reports choice values the node_info does not list, links dropped because their source is not in the prompt, and queue-time widgets that still need a value (`details["queue_time"]`).
 
 ## [2.3.0] - 2026-08-16
 
